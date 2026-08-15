@@ -94,8 +94,8 @@
   .arcwrap{width:100%; max-width:112px; margin:0 auto;}
   .nav{position:fixed; bottom:0; left:0; right:0; background:var(--card); border-top:1px solid var(--line);
     display:flex; justify-content:center; z-index:40;}
-  .navin{width:100%; max-width:430px; display:grid; grid-template-columns:1fr 1fr 1fr;}
-  .nav button{background:none; border-radius:0; padding:10px 0 12px; text-align:center; color:var(--muted); font-size:10.5px;}
+  .navin{width:100%; max-width:430px; display:grid; grid-template-columns:1fr 1fr;}
+  .nav button{background:none; border-radius:0; padding:10px 0 12px; text-align:center; color:var(--muted); font-size:11px;}
   .nav button.on{color:var(--blue); font-weight:600;}
   .nav .ic{font-size:19px; display:block; margin-bottom:2px;}
   .fab{position:fixed; bottom:78px; right:calc(50% - 215px + 14px); background:var(--card);
@@ -109,6 +109,42 @@
   .timer{font-size:42px; font-weight:700; text-align:center; font-variant-numeric:tabular-nums; padding:14px 0 4px;}
   .bar{height:4px; background:var(--line); border-radius:2px; overflow:hidden;}
   .bar div{height:100%; background:var(--blue); transition:width 1s linear;}
+  /* Onboarding */
+  .ob-hero{text-align:center; padding:32px 12px 24px;}
+  .ob-hero .emoji{font-size:56px; display:block; margin-bottom:12px;}
+  .ob-hero h1{font-size:26px; letter-spacing:-.02em;}
+  .ob-hero .sub{font-size:15px; margin-top:8px; line-height:1.6;}
+  .ob-steps{display:flex; align-items:center; justify-content:center; gap:0; margin:18px 0 22px;}
+  .ob-dot{width:10px; height:10px; border-radius:50%; background:var(--line); transition:background .2s, transform .2s;}
+  .ob-dot.active{background:var(--blue); transform:scale(1.25);}
+  .ob-dot.done{background:var(--calm);}
+  .ob-line{width:28px; height:2px; background:var(--line);}
+  .ob-line.done{background:var(--calm);}
+  .ob-chip{display:inline-flex; align-items:center; gap:6px; padding:6px 14px; border-radius:99px;
+    font-size:13px; font-weight:500; border:1.5px solid var(--line); background:var(--card); margin:4px;}
+  .ob-chip.selected{border-color:var(--calm); background:var(--calmbg);}
+  .ob-chip .x{font-size:11px; color:var(--muted);}
+  .ob-meta-list{display:flex; flex-wrap:wrap; gap:6px; margin-top:12px; justify-content:center;}
+
+  /* Ritual step progress */
+  .rsteps{display:flex; align-items:center; justify-content:center; gap:0; margin-bottom:18px;}
+  .rstep{width:28px; height:28px; border-radius:50%; font-size:12px; font-weight:600;
+    display:flex; align-items:center; justify-content:center;
+    background:var(--card2); border:2px solid var(--line); color:var(--muted); transition:all .2s;}
+  .rstep.active{border-color:var(--blue); color:var(--blue); background:var(--bluebg);}
+  .rstep.done{border-color:var(--calm); color:#fff; background:var(--calm);}
+  .rline{width:24px; height:2px; background:var(--line);}
+  .rline.done{background:var(--calm);}
+
+  /* Scale feedback */
+  .scale button.picked{background:var(--bluebg); border-color:var(--blue); color:var(--blue); font-weight:700;
+    transform:scale(1.08); transition:all .15s;}
+
+  /* Empty state */
+  .empty-state{text-align:center; padding:28px 16px;}
+  .empty-state .emoji{font-size:44px; display:block; margin-bottom:10px;}
+  .empty-state .sub{font-size:14px; margin-top:6px; line-height:1.6;}
+
   @media (prefers-reduced-motion: reduce){ *{transition:none !important;} }
 </style>
 </head>
@@ -116,8 +152,7 @@
 <div class="app" id="app"><div class="card">Cargando…</div></div>
 <button class="fab" id="fab" style="display:none;">⇄ Sustituir</button>
 <nav class="nav" id="nav" style="display:none;"><div class="navin">
-  <button id="nv-hoy"><span class="ic">☀️</span>Hoy</button>
-  <button id="nv-prog"><span class="ic">📊</span>Progreso</button>
+  <button id="nv-hoy"><span class="ic">☀️</span>Inicio</button>
   <button id="nv-aj"><span class="ic">⚙️</span>Ajustes</button>
 </div></nav>
 <div class="toast" id="toast"></div>
@@ -218,10 +253,9 @@ let state = { actions:[], logs:{}, affirmations:AFIRM_BASE.slice(), logros:LOGRO
 let mem = false;
 let view = { name:'hoy' };
 let timerId = null;
-const TABS = { hoy:'hoy', prog:'prog', ajustes:'ajustes' };
+const TABS = { hoy:'hoy', ajustes:'ajustes' };
 function tabOf(name){
-  if(['hoy','am','pm'].includes(name)) return 'hoy';
-  if(['prog','review'].includes(name)) return 'prog';
+  if(['hoy','am','pm','review'].includes(name)) return 'hoy';
   return 'ajustes';
 }
 function goalById(id){ return (state.goals||[]).find(g=>g.id===id)||null; }
@@ -248,9 +282,11 @@ async function load(){
     if (r && r.value){ state = Object.assign(state, JSON.parse(r.value)); }
   }catch(e){}
   applyTheme();
+  let isFirstUse = false;
   if (!state.goals){
     state.goals = METAS_SEMILLA.map((m,i)=>({ id:'g'+i, name:m.name, area:m.area, why:m.why, hor:m.hor, principal:false }));
     if (state.meta){ state.goals.unshift({ id:'gm', name:state.meta, area:'personal', why:state.porque||'', hor:1, principal:true }); }
+    isFirstUse = true;
     await save();
   }
   let mig=false;
@@ -262,6 +298,7 @@ async function load(){
   const AFIRM_OLD = ['Me quiero a mí mismo y me acepto incondicionalmente.','Soy responsable: soy el arquitecto de mi propio destino.','Soy capaz de lograr lo que me propongo, con paz y con energía.'];
   if (!state.affirmations || JSON.stringify(state.affirmations)===JSON.stringify(AFIRM_OLD)){ state.affirmations=AFIRM_BASE.slice(); mig=true; }
   if(mig) await save();
+  if(isFirstUse && !firstLog()) { view={name:'onboarding',step:1}; }
   render();
 }
 async function save(){
@@ -331,18 +368,18 @@ function render(){
   if(timerId){ clearInterval(timerId); timerId=null; }
   app.innerHTML='';
   const inRitual = view.name==='am'||view.name==='pm';
-  nav.style.display = inRitual ? 'none' : 'flex';
+  const inOb = view.name==='onboarding';
+  nav.style.display = (inRitual||inOb) ? 'none' : 'flex';
   fab.style.display = (view.name==='hoy' && state.actions.length) ? 'block' : 'none';
   const t=tabOf(view.name);
   document.getElementById('nv-hoy').className = t==='hoy'?'on':'';
-  document.getElementById('nv-prog').className = t==='prog'?'on':'';
   document.getElementById('nv-aj').className = t==='ajustes'?'on':'';
-  ({hoy:renderHoy, prog:renderProg, ajustes:renderAjustes, am:renderAM, pm:renderPM,
-    metas:renderMetas, acts:renderActs, logros:renderLogros, review:renderReview})[view.name]();
+  ({hoy:renderHoy, ajustes:renderAjustes, am:renderAM, pm:renderPM,
+    metas:renderMetas, acts:renderActs, logros:renderLogros, review:renderReview,
+    onboarding:renderOnboarding})[view.name]();
   window.scrollTo(0,0);
 }
 document.getElementById('nv-hoy').onclick=()=>{view={name:'hoy'};render();};
-document.getElementById('nv-prog').onclick=()=>{view={name:'prog'};render();};
 document.getElementById('nv-aj').onclick=()=>{view={name:'ajustes'};render();};
 fab.onclick = openSustituir;
 
@@ -353,10 +390,136 @@ function arcSVG(score,color){
     '<path d="M 10 55 A 40 40 0 0 1 90 55" fill="none" stroke="'+color+'" stroke-width="9" stroke-linecap="round" stroke-dasharray="'+T+'" stroke-dashoffset="'+off+'"/></svg>';
 }
 
-/* ===== PESTAÑA: HOY ===== */
+/* ===== HELPERS UX ===== */
+function obDotsHTML(current,total){
+  let h='';
+  for(let i=1;i<=total;i++){
+    if(i>1) h+='<div class="ob-line'+(i<=current?' done':'')+'"></div>';
+    h+='<div class="ob-dot'+(i===current?' active':(i<current?' done':'')+'"></div>');
+  }
+  return '<div class="ob-steps">'+h+'</div>';
+}
+function ritualStepsHTML(current,total){
+  let h='';
+  for(let i=1;i<=total;i++){
+    if(i>1) h+='<div class="rline'+(i<=current?' done':'')+'"></div>';
+    h+='<div class="rstep'+(i===current?' active':(i<current?' done':''))+'">'+(i<current?'✓':i)+'</div>';
+  }
+  return '<div class="rsteps">'+h+'</div>';
+}
+
+/* ===== ONBOARDING ===== */
+function renderOnboarding(){
+  const step=view.step||1;
+  app.appendChild(el(obDotsHTML(step,3)));
+
+  if(step===1){
+    const c=el('<div class="ob-hero"><span class="emoji">🔥</span>'+
+      '<h1>Bienvenido a Fénix</h1>'+
+      '<div class="sub">Tu potencial, sin quemarte.<br>'+
+      'Fénix te ayuda a avanzar hacia tus metas con rituales diarios breves — y te protege del burnout.</div></div>'+
+      '<div class="card"><div class="secthead">¿Cómo funciona?</div>'+
+      '<div class="sub" style="margin:0; line-height:1.7;">'+
+      '☀️ <b>Mañana</b> — 2 min para enfocarte<br>'+
+      '🌙 <b>Noche</b> — 1 min para cerrar el día<br>'+
+      '♡ <b>Gobernadores</b> — paz y energía cuidan tu ritmo<br>'+
+      '⭐ <b>Meta principal</b> — una sola a la vez</div></div>'+
+      '<button class="btn primary" id="next">Empezar →</button>');
+    app.appendChild(c);
+    c.querySelector('#next').onclick=()=>{view.step=2;render();};
+  } else if(step===2){
+    const anuales=(state.goals||[]).filter(g=>(g.hor||1)<=1);
+    const futuras=(state.goals||[]).filter(g=>(g.hor||1)>1);
+    if(!view.kept) view.kept=new Set(state.goals.map(g=>g.id));
+    const c=el('<div class="card"><div class="q">Revisa tus metas</div>'+
+      '<div class="sub">Cargamos algunas metas de ejemplo. Toca para quitar las que no aplican y deja solo las tuyas. Después podrás agregar más.</div></div>');
+    app.appendChild(c);
+
+    function metaChips(title, metas){
+      if(!metas.length) return;
+      const sec=el('<div class="card"><div class="secthead">'+title+'</div><div class="ob-meta-list" id="ml-'+title+'"></div></div>');
+      app.appendChild(sec);
+      const ml=sec.querySelector('.ob-meta-list');
+      metas.forEach(g=>{
+        const kept=view.kept.has(g.id);
+        const chip=document.createElement('button');
+        chip.className='ob-chip'+(kept?' selected':'');
+        chip.innerHTML=esc(g.name)+(kept?' <span class="x">✕</span>':'');
+        chip.onclick=()=>{ if(view.kept.has(g.id)) view.kept.delete(g.id); else view.kept.add(g.id); render(); };
+        ml.appendChild(chip);
+      });
+    }
+    metaChips('Este año', anuales);
+    metaChips('Más adelante', futuras);
+
+    const nav2=el('<div style="margin-top:14px;"><button class="btn primary" id="next">Continuar →</button>'+
+      '<button class="btn ghost" id="back">← Atrás</button></div>');
+    app.appendChild(nav2);
+    nav2.querySelector('#next').onclick=async()=>{
+      state.goals=state.goals.filter(g=>view.kept.has(g.id));
+      await save(); view.step=3; delete view.kept; render();
+    };
+    nav2.querySelector('#back').onclick=()=>{view.step=1;render();};
+  } else {
+    const pg=principal();
+    const c=el('<div class="card"><div class="q">Elige tus primeras acciones</div>'+
+      '<div class="sub">3 a 5 cosas que puedas hacer incluso en un día difícil. Cada una sirve a una meta o es un hábito de vida.</div></div>');
+    app.appendChild(c);
+
+    if(!view.picked) view.picked=[];
+    const sug=SUGERIDAS.filter(s=>!view.picked.some(p=>p.name===s.name));
+    if(view.picked.length){
+      const cur=el('<div class="card"><div class="secthead">Elegidas · '+view.picked.length+' de 5</div><div id="pl"></div></div>');
+      app.appendChild(cur);
+      const pl=cur.querySelector('#pl');
+      view.picked.forEach((p,i)=>{
+        const A=AREAS[p.area];
+        const r=el('<div class="act on"><span class="cb">✓</span><span class="aname">'+esc(p.name)+'</span>'+
+          '<span class="atag" style="background:'+A.color+'1c; color:'+A.color+';">'+A.nom+'</span>'+
+          '<button style="background:none; color:var(--muted); font-size:15px; padding:0 4px;" aria-label="Quitar">✕</button></div>');
+        r.querySelector('button').onclick=()=>{ view.picked.splice(i,1); render(); };
+        pl.appendChild(r);
+      });
+    }
+
+    if(view.picked.length<5 && sug.length){
+      const sc=el('<div class="card"><div class="secthead">Sugeridas</div><div id="sl"></div></div>');
+      app.appendChild(sc);
+      const sl=sc.querySelector('#sl');
+      sug.forEach(s=>{
+        const A=AREAS[s.area];
+        const b=document.createElement('button');
+        b.className='act';
+        b.innerHTML='<span class="cb" style="border-style:dashed; color:var(--muted);">+</span><span class="aname">'+esc(s.name)+'</span>'+
+          '<span class="atag" style="background:'+A.color+'1c; color:'+A.color+';">'+A.nom+'</span>';
+        b.onclick=()=>{ if(view.picked.length>=5){toast('Máximo 5.');return;} view.picked.push(s); render(); };
+        sl.appendChild(b);
+      });
+    }
+
+    const nav3=el('<div style="margin-top:14px;">'+
+      (view.picked.length?'<button class="btn primary" id="done">Listo, empezar →</button>':'')+
+      '<button class="btn ghost" id="back">← Atrás</button></div>');
+    app.appendChild(nav3);
+    const done=nav3.querySelector('#done');
+    if(done) done.onclick=async()=>{
+      view.picked.forEach(p=>{
+        const g=p.goal?goalByName(p.goal):null;
+        state.actions.push({id:'a'+Date.now()+Math.random().toString(36).slice(2,5),name:p.name,area:p.area,goalId:g?g.id:null});
+      });
+      await save(); view={name:'hoy'}; render();
+      toast('¡Todo listo! Empieza con tu ritual de la mañana.');
+    };
+    nav3.querySelector('#back').onclick=()=>{view.step=2;render();};
+  }
+}
+
+/* ===== PESTAÑA: HOY / DASHBOARD UNIFICADO ===== */
 function renderHoy(){
   const hoy=todayStr(), L=state.logs[hoy]||{}, pg=principal();
-  app.appendChild(el('<div style="margin-bottom:14px;"><h1>Hoy</h1><div class="sub">Tu potencial, sin quemarte.</div></div>'));
+  const dg=diagnose(hoy), w=dg.w, s=streak(hoy), rec=record(hoy);
+
+  app.appendChild(el('<div style="margin-bottom:14px;"><h1>Inicio</h1><div class="sub">Tu potencial, sin quemarte.</div></div>'));
   if(mem) app.appendChild(el('<div class="card" style="border-color:var(--warn); color:var(--warn); font-size:13px;">Almacenamiento no disponible: los datos viven solo en esta sesión.</div>'));
 
   if(!state.actions.length){
@@ -368,6 +531,43 @@ function renderHoy(){
     return;
   }
 
+  /* 1. KPIs de Momento & Constancia */
+  app.appendChild(el('<div class="kpis">'+
+    '<div class="kpi"><div class="kval"><span style="color:var(--blue);">🔥</span> '+s+'</div><div class="klab">racha</div></div>'+
+    '<div class="kpi"><div class="kval">'+rec+'</div><div class="klab">récord</div></div>'+
+    '<div class="kpi"><div class="kval">'+(w.n?w.cump+'%':'—')+'</div><div class="klab">cumplim. 7d</div></div></div>'));
+
+  /* 2. Gobernadores (Paz & Energía) */
+  const gp=w.n?w.paz:null, ge=w.n?w.ener:null;
+  const cp=gp===null?'var(--line)':govColor(gp,dg.tP??null);
+  const ce=ge===null?'var(--line)':govColor(ge,dg.tE??null);
+  const ar=t=>t===null||t===undefined?'':(t>0.3?' ↑':t<-0.3?' ↓':' →');
+  const enR=dg.estado==='quemandose'||dg.estado==='apagado';
+  const tone=enR?{bg:'var(--riskbg)',tx:'var(--risk)'}
+    :(gp!==null&&(gp<6.5||ge<6.5||(dg.tE??0)<=-1||(dg.tP??0)<=-1))?{bg:'var(--warnbg)',tx:'var(--warn)'}
+    :{bg:'var(--calmbg)',tx:'var(--calm)'};
+  const gtxt=gp===null?'Registra tus primeras noches para calibrar tus gobernadores.'
+    :enR?'Tus gobernadores están pidiendo una pausa. Toca para recalibrar.'
+    :tone.tx==='var(--warn)'?'Alguno de tus gobernadores viene bajando esta semana. Vale la pena mirarlo.'
+    :'Tu ritmo se está sosteniendo.';
+  const gov=el('<div class="card"><div style="display:flex; justify-content:space-between; align-items:center;"><div class="secthead" style="margin:0;">Tus gobernadores · 7 días</div><span style="color:var(--muted);">♡</span></div><div class="gov2" style="margin-top:10px;">'+
+    '<div class="gcell">'+arcSVG(gp??0,cp)+'<div style="margin-top:-6px;"><span class="gval">'+(gp??'—')+'</span><span style="font-size:13px; color:'+cp+';">'+ar(dg.tP)+'</span></div><div class="glab">paz mental</div></div>'+
+    '<div class="gcell">'+arcSVG(ge??0,ce)+'<div style="margin-top:-6px;"><span class="gval">'+(ge??'—')+'</span><span style="font-size:13px; color:'+ce+';">'+ar(dg.tE)+'</span></div><div class="glab">energía</div></div></div>'+
+    '<button class="govmsg" id="gm" style="background:'+tone.bg+'; color:'+tone.tx+';">'+gtxt+'</button></div>');
+  app.appendChild(gov);
+  gov.querySelector('#gm').onclick=()=>{view={name:'review'};render();};
+
+  /* 3. Rituales (Accesos directos) */
+  const rit=el('<div style="display:flex; gap:8px; margin-bottom:12px;">'+
+    '<button class="btn '+(L.am?'':'primary')+'" id="bam" style="margin:0; flex:1; text-align:center;">'+
+      (L.am?'Mañana ✓':'☀️ Ritual mañana')+'</button>'+
+    '<button class="btn '+(L.pm?'':(L.am?'primary':''))+'" id="bpm" style="margin:0; flex:1; text-align:center;">'+
+      (L.pm?'Noche ✓':(L.rec?'Recuperación ✓':'🌙 Ritual noche'))+'</button></div>');
+  app.appendChild(rit);
+  rit.querySelector('#bam').onclick=()=>{view={name:'am',step:1};render();};
+  rit.querySelector('#bpm').onclick=()=>{view={name:'pm',step:1,done:[]};render();};
+
+  /* 4. Meta Principal ⭐ */
   if(pg){
     const actsPg=state.actions.filter(a=>a.goalId===pg.id).map(a=>a.id);
     let pgDone=0, pgTotal=0;
@@ -394,15 +594,7 @@ function renderHoy(){
     mp.firstChild.onclick=()=>{view={name:(actsPg.length?'metas':'acts')};render();};
   }
 
-  const rit=el('<div style="display:flex; gap:8px; margin-bottom:12px;">'+
-    '<button class="btn '+(L.am?'':'primary')+'" id="bam" style="margin:0; flex:1; text-align:center;">'+
-      (L.am?'Mañana ✓':'☀️ Ritual de la mañana')+'</button>'+
-    '<button class="btn '+(L.pm?'':(L.am?'primary':''))+'" id="bpm" style="margin:0; flex:1; text-align:center;">'+
-      (L.pm?'Noche ✓':(L.rec?'Recuperación ✓':'🌙 Ritual de la noche'))+'</button></div>');
-  app.appendChild(rit);
-  rit.querySelector('#bam').onclick=()=>{view={name:'am',step:1};render();};
-  rit.querySelector('#bpm').onclick=()=>{view={name:'pm',step:1,done:[]};render();};
-
+  /* 5. Roca de Hoy 🪨 */
   if(L.am&&L.am.roca){
     const a=state.actions.find(x=>x.id===L.am.roca);
     if(a){
@@ -415,6 +607,7 @@ function renderHoy(){
     }
   }
 
+  /* 6. Acciones de Hoy */
   const acc=el('<div class="card"><div class="secthead">Tus acciones de hoy</div><div id="al"></div></div>');
   app.appendChild(acc);
   const al=acc.querySelector('#al');
@@ -422,25 +615,13 @@ function renderHoy(){
   state.actions.forEach(a=>{
     const A=AREAS[a.area], done=doneHoy.includes(a.id);
     al.appendChild(el('<div style="display:flex; align-items:center; gap:9px; padding:7px 0; font-size:13.5px;">'+
-      '<span style="color:'+(done?'var(--calm)':'var(--muted)')+';">'+(done?'✓':'○')+'</span>'+
-      '<span style="flex:1;">'+esc(a.name)+'</span>'+
+      '<span style="color:'+(done?'var(--calm)':'var(--muted)')+'; font-weight:bold;">'+(done?'✓':'○')+'</span>'+
+      '<span style="flex:1; '+(done?'opacity:.75; text-decoration:line-through;':'')+'">'+esc(a.name)+'</span>'+
       '<span class="atag" style="background:'+A.color+'1c; color:'+A.color+';">'+A.nom+'</span></div>'));
   });
-}
 
-/* ===== PESTAÑA: PROGRESO (el dashboard del mockup) ===== */
-function renderProg(){
-  const hoy=todayStr(), dg=diagnose(hoy), w=dg.w;
-  const s=streak(hoy), rec=record(hoy);
-
-  app.appendChild(el('<div style="margin-bottom:14px;"><h1>Progreso</h1></div>'));
-
-  app.appendChild(el('<div class="kpis">'+
-    '<div class="kpi"><div class="kval"><span style="color:var(--blue);">🔥</span> '+s+'</div><div class="klab">racha</div></div>'+
-    '<div class="kpi"><div class="kval">'+rec+'</div><div class="klab">récord</div></div>'+
-    '<div class="kpi"><div class="kval">'+(w.n?w.cump+'%':'—')+'</div><div class="klab">cumplim. 7d</div></div></div>'));
-
-  const hm=el('<div class="card"><div class="secthead">Últimas 4 semanas</div><div class="heat" id="hm"></div>'+
+  /* 7. Mapa de Constancia (Heatmap 4 semanas) */
+  const hm=el('<div class="card"><div class="secthead">Constancia · últimas 4 semanas</div><div class="heat" id="hm"></div>'+
     '<div class="legend"><span><i style="background:var(--blue);"></i>cumplido</span>'+
     '<span><i style="background:var(--heat-partial);"></i>parcial</span>'+
     '<span><i style="background:var(--recov);"></i>recuperación</span></div></div>');
@@ -457,27 +638,9 @@ function renderProg(){
     cell.title=d; grid.appendChild(cell);
   }
 
-  const gp=w.n?w.paz:null, ge=w.n?w.ener:null;
-  const cp=gp===null?'var(--line)':govColor(gp,dg.tP??null);
-  const ce=ge===null?'var(--line)':govColor(ge,dg.tE??null);
-  const ar=t=>t===null||t===undefined?'':(t>0.3?' ↑':t<-0.3?' ↓':' →');
-  const enR=dg.estado==='quemandose'||dg.estado==='apagado';
-  const tone=enR?{bg:'var(--riskbg)',tx:'var(--risk)'}
-    :(gp!==null&&(gp<6.5||ge<6.5||(dg.tE??0)<=-1||(dg.tP??0)<=-1))?{bg:'var(--warnbg)',tx:'var(--warn)'}
-    :{bg:'var(--calmbg)',tx:'var(--calm)'};
-  const gtxt=gp===null?'Registra tus primeras noches para ver tus gobernadores.'
-    :enR?'Tus gobernadores están pidiendo una pausa. Toca para recalibrar.'
-    :tone.tx==='var(--warn)'?'Alguno de tus gobernadores viene bajando esta semana. Vale la pena mirarlo.'
-    :'Tu ritmo se está sosteniendo.';
-  const gov=el('<div class="card"><div style="display:flex; justify-content:space-between; align-items:center;"><div class="secthead" style="margin:0;">Tus gobernadores · 7 días</div><span style="color:var(--muted);">♡</span></div><div class="gov2" style="margin-top:10px;">'+
-    '<div class="gcell">'+arcSVG(gp??0,cp)+'<div style="margin-top:-6px;"><span class="gval">'+(gp??'—')+'</span><span style="font-size:13px; color:'+cp+';">'+ar(dg.tP)+'</span></div><div class="glab">paz mental</div></div>'+
-    '<div class="gcell">'+arcSVG(ge??0,ce)+'<div style="margin-top:-6px;"><span class="gval">'+(ge??'—')+'</span><span style="font-size:13px; color:'+ce+';">'+ar(dg.tE)+'</span></div><div class="glab">energía</div></div></div>'+
-    '<button class="govmsg" id="gm" style="background:'+tone.bg+'; color:'+tone.tx+';">'+gtxt+'</button></div>');
-  app.appendChild(gov);
-  gov.querySelector('#gm').onclick=()=>{view={name:'review'};render();};
-
+  /* 8. Acceso a Revisión Semanal */
   const rv=el('<button class="row"><span><div style="font-size:14px; font-weight:600;">Revisión semanal</div>'+
-    '<div class="sub" style="margin:0; font-size:11.5px;">estado, balance de áreas y avance de metas</div></span>'+
+    '<div class="sub" style="margin:0; font-size:11.5px;">balance de áreas, avance de metas y reflexión</div></span>'+
     '<span style="color:var(--muted);">›</span></button>');
   app.appendChild(rv);
   rv.firstChild.onclick=()=>{view={name:'review'};render();};
@@ -526,6 +689,7 @@ function renderAM(){
   const back=el('<button class="back">← Volver</button>');
   app.appendChild(back);
   back.firstChild.onclick=()=>{view={name:'hoy'};render();};
+  app.appendChild(el(ritualStepsHTML(step,4)));
 
   if(step===1){
     const c=el('<div class="card"><div class="secthead">Mañana · 1 de 4 · Responsabilidad</div>'+
@@ -596,6 +760,7 @@ function renderPM(){
   const back=el('<button class="back">← Volver</button>');
   app.appendChild(back);
   back.firstChild.onclick=()=>{view={name:'hoy'};render();};
+  app.appendChild(el(ritualStepsHTML(step,4)));
   const roca=(state.logs[hoy]&&state.logs[hoy].am)?state.logs[hoy].am.roca:null;
 
   if(step===1){
@@ -628,7 +793,9 @@ function renderPM(){
     const c=el('<div class="card"><div class="secthead">Noche · 2 de 4 · Gratitud (Atracción)</div>'+
       '<div class="q">Tres cosas de hoy que agradeces</div>'+
       '<div class="sub">Eres un imán de tus pensamientos predominantes. Cierra el día apuntando al norte.</div>'+
-      '<input type="text" id="g1" placeholder="1."><input type="text" id="g2" placeholder="2."><input type="text" id="g3" placeholder="3.">'+
+      '<input type="text" id="g1" placeholder="Algo que salió bien hoy…">'+
+      '<input type="text" id="g2" placeholder="Alguien o un gesto que aprecio…">'+
+      '<input type="text" id="g3" placeholder="Un momento o aprendizaje del día…">'+
       '<button class="btn primary" id="n">Continuar</button></div>');
     app.appendChild(c);
     c.querySelector('#n').onclick=()=>{
@@ -656,8 +823,17 @@ function renderPM(){
   }
 }
 function scaleInto(node,fn){
-  for(let i=1;i<=10;i++){ const b=document.createElement('button');
-    b.textContent=i; b.onclick=()=>fn(i); node.appendChild(b); }
+  for(let i=1;i<=10;i++){
+    const b=document.createElement('button');
+    b.textContent=i;
+    b.onclick=(e)=>{
+      const all=node.querySelectorAll('button');
+      all.forEach(btn=>btn.classList.remove('picked'));
+      b.classList.add('picked');
+      setTimeout(()=>fn(i),200);
+    };
+    node.appendChild(b);
+  }
 }
 
 /* ===== SUSTITUIR ===== */
@@ -678,7 +854,7 @@ function openSustituir(){
 
 /* ===== METAS ===== */
 function renderMetas(){
-  const back=el('<button class="back">← Ajustes</button>');
+  const back=el('<button class="back">← Volver</button>');
   app.appendChild(back);
   back.firstChild.onclick=()=>{view={name:'ajustes'};render();};
 
@@ -755,7 +931,7 @@ function renderMetas(){
 
 /* ===== ACCIONES ===== */
 function renderActs(){
-  const back=el('<button class="back">← Ajustes</button>');
+  const back=el('<button class="back">← Volver</button>');
   app.appendChild(back);
   back.firstChild.onclick=()=>{view={name:'ajustes'};render();};
 
@@ -830,7 +1006,7 @@ function renderActs(){
 
 /* ===== LOGROS ===== */
 function renderLogros(){
-  const back=el('<button class="back">← Ajustes</button>');
+  const back=el('<button class="back">← Volver</button>');
   app.appendChild(back);
   back.firstChild.onclick=()=>{view={name:'ajustes'};render();};
 
@@ -857,9 +1033,9 @@ function renderLogros(){
 /* ===== REVISIÓN SEMANAL ===== */
 function renderReview(){
   const hoy=todayStr(), dg=diagnose(hoy), m=META_E[dg.estado], w=dg.w;
-  const back=el('<button class="back">← Progreso</button>');
+  const back=el('<button class="back">← Volver</button>');
   app.appendChild(back);
-  back.firstChild.onclick=()=>{view={name:'prog'};render();};
+  back.firstChild.onclick=()=>{view={name:'hoy'};render();};
 
   const c=el('<div class="card"><div class="q">Revisión semanal</div>'+
     '<div style="display:flex; align-items:center; gap:10px; margin-top:12px;">'+
