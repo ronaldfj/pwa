@@ -90,18 +90,13 @@ No renombrar la clave `fenix-v2` (perdería el historial del usuario).
 
 ## Estructura de la app (SPA en index.html)
 
-- Navegación inferior: **Hoy** · **Progreso** · **Ajustes** (se oculta en rituales).
-- Vistas (`view.name`): hoy, prog, ajustes, am (ritual mañana), pm (ritual
-  noche), metas, acts, logros, review. Router simple en `render()`.
-- **Ritual mañana (4 pasos):** Responsabilidad → Afirmación (Creencia) →
-  Visualización 30s de la meta ⭐ → Elegir roca 🪨 (Pareto 80/20 + Expectativa).
-- **Ritual noche (4 pasos):** Acciones cumplidas → Gratitud x3 (Atracción) →
-  Paz mental → Energía.
-- **Botón flotante "⇄ Sustituir"** (Ley de Sustitución): overlay con afirmación
-  + un logro aleatorio como evidencia contra el miedo. Cuenta usos en `subs`.
-- **Revisión semanal:** estado + balance por área + avance por meta +
-  usos de Sustituir + reflexión rotativa (REFLEX: perdón, relaciones, 80/20,
-  miedo, amor, dieta mental) + 3 preguntas.
+- Navegación inferior: **Hoy** (Dashboard unificado) · **Ajustes** (se oculta en rituales).
+- Vistas (`view.name`): hoy (dashboard principal con KPIs, gobernadores, rituales, foco, acciones y constancia), ajustes, am (ritual mañana), pm (ritual noche), metas, acts, logros, review. Router simple en `render()`.
+- **Pantalla principal (Hoy):** Dashboard unificado con pulso (racha/récord/cumplimiento), medidores de gobernadores, accesos a rituales, meta principal ⭐, roca 🪨, acciones diarias y mapa de constancia (heatmap 4 semanas + enlace a revisión semanal).
+- **Ritual mañana (4 pasos con barra de progreso):** Responsabilidad → Afirmación (Creencia) → Visualización 30s de la meta ⭐ → Elegir roca 🪨 (Pareto 80/20 + Expectativa).
+- **Ritual noche (4 pasos con barra de progreso):** Acciones cumplidas → Gratitud x3 (Atracción con placeholders orientativos) → Paz mental (con feedback táctil) → Energía (con feedback táctil).
+- **Botón flotante "⇄ Sustituir"** (Ley de Sustitución): overlay con afirmación + un logro aleatorio como evidencia contra el miedo. Cuenta usos en `subs`.
+- **Revisión semanal:** estado + balance por área + avance por meta + usos de Sustituir + reflexión rotativa (REFLEX: perdón, relaciones, 80/20, miedo, amor, dieta mental) + 3 preguntas. Retorno directo con `← Volver`.
 - Temas claro/oscuro vía `html[data-theme]` y variables CSS. TODO color nuevo
   debe usar variables (--card, --text, --blue, --heat-*, etc.), nunca hex fijo
   en estilos, para no romper el tema oscuro.

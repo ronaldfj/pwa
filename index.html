@@ -51,8 +51,9 @@
   .voice{font-size:18px; line-height:1.55; text-align:center; padding:18px 8px; font-weight:500; font-style:italic;}
   .anchors{font-size:11.5px; color:var(--muted); line-height:1.6; margin-top:12px;}
   .scale{display:grid; grid-template-columns:repeat(5,1fr); gap:8px; margin-top:14px;}
-  .scale button{padding:13px 0; background:var(--card2); border:1px solid var(--line); font-variant-numeric:tabular-nums;}
+  .scale button{padding:13px 0; background:var(--card2); border:1px solid var(--line); font-variant-numeric:tabular-nums; transition:all .15s;}
   .scale button:hover{border-color:var(--blue);}
+  .scale button.picked{background:var(--bluebg); border-color:var(--blue); color:var(--blue); font-weight:700; transform:scale(1.06);}
   .back{background:none; color:var(--muted); font-size:13px; padding:0; margin-bottom:14px; border-radius:0;}
   input[type=text], select{width:100%; padding:12px; border-radius:10px; border:1px solid var(--line);
     background:var(--card2); color:var(--text); font-family:inherit; font-size:14px; margin-top:6px;}
@@ -94,8 +95,8 @@
   .arcwrap{width:100%; max-width:112px; margin:0 auto;}
   .nav{position:fixed; bottom:0; left:0; right:0; background:var(--card); border-top:1px solid var(--line);
     display:flex; justify-content:center; z-index:40;}
-  .navin{width:100%; max-width:430px; display:grid; grid-template-columns:1fr 1fr 1fr;}
-  .nav button{background:none; border-radius:0; padding:10px 0 12px; text-align:center; color:var(--muted); font-size:10.5px;}
+  .navin{width:100%; max-width:430px; display:grid; grid-template-columns:1fr 1fr;}
+  .nav button{background:none; border-radius:0; padding:10px 0 12px; text-align:center; color:var(--muted); font-size:11px;}
   .nav button.on{color:var(--blue); font-weight:600;}
   .nav .ic{font-size:19px; display:block; margin-bottom:2px;}
   .fab{position:fixed; bottom:78px; right:calc(50% - 215px + 14px); background:var(--card);
@@ -109,6 +110,17 @@
   .timer{font-size:42px; font-weight:700; text-align:center; font-variant-numeric:tabular-nums; padding:14px 0 4px;}
   .bar{height:4px; background:var(--line); border-radius:2px; overflow:hidden;}
   .bar div{height:100%; background:var(--blue); transition:width 1s linear;}
+
+  /* Ritual step progress */
+  .rsteps{display:flex; align-items:center; justify-content:center; gap:0; margin-bottom:18px;}
+  .rstep{width:28px; height:28px; border-radius:50%; font-size:12px; font-weight:600;
+    display:flex; align-items:center; justify-content:center;
+    background:var(--card2); border:2px solid var(--line); color:var(--muted); transition:all .2s;}
+  .rstep.active{border-color:var(--blue); color:var(--blue); background:var(--bluebg);}
+  .rstep.done{border-color:var(--calm); color:#fff; background:var(--calm);}
+  .rline{width:24px; height:2px; background:var(--line);}
+  .rline.done{background:var(--calm);}
+
   @media (prefers-reduced-motion: reduce){ *{transition:none !important;} }
 </style>
 </head>
@@ -117,7 +129,6 @@
 <button class="fab" id="fab" style="display:none;">⇄ Sustituir</button>
 <nav class="nav" id="nav" style="display:none;"><div class="navin">
   <button id="nv-hoy"><span class="ic">☀️</span>Hoy</button>
-  <button id="nv-prog"><span class="ic">📊</span>Progreso</button>
   <button id="nv-aj"><span class="ic">⚙️</span>Ajustes</button>
 </div></nav>
 <div class="toast" id="toast"></div>
@@ -218,10 +229,9 @@ let state = { actions:[], logs:{}, affirmations:AFIRM_BASE.slice(), logros:LOGRO
 let mem = false;
 let view = { name:'hoy' };
 let timerId = null;
-const TABS = { hoy:'hoy', prog:'prog', ajustes:'ajustes' };
+const TABS = { hoy:'hoy', ajustes:'ajustes' };
 function tabOf(name){
-  if(['hoy','am','pm'].includes(name)) return 'hoy';
-  if(['prog','review'].includes(name)) return 'prog';
+  if(['hoy','am','pm','review'].includes(name)) return 'hoy';
   return 'ajustes';
 }
 function goalById(id){ return (state.goals||[]).find(g=>g.id===id)||null; }
@@ -335,14 +345,12 @@ function render(){
   fab.style.display = (view.name==='hoy' && state.actions.length) ? 'block' : 'none';
   const t=tabOf(view.name);
   document.getElementById('nv-hoy').className = t==='hoy'?'on':'';
-  document.getElementById('nv-prog').className = t==='prog'?'on':'';
   document.getElementById('nv-aj').className = t==='ajustes'?'on':'';
-  ({hoy:renderHoy, prog:renderProg, ajustes:renderAjustes, am:renderAM, pm:renderPM,
+  ({hoy:renderHoy, ajustes:renderAjustes, am:renderAM, pm:renderPM,
     metas:renderMetas, acts:renderActs, logros:renderLogros, review:renderReview})[view.name]();
   window.scrollTo(0,0);
 }
 document.getElementById('nv-hoy').onclick=()=>{view={name:'hoy'};render();};
-document.getElementById('nv-prog').onclick=()=>{view={name:'prog'};render();};
 document.getElementById('nv-aj').onclick=()=>{view={name:'ajustes'};render();};
 fab.onclick = openSustituir;
 
@@ -353,9 +361,20 @@ function arcSVG(score,color){
     '<path d="M 10 55 A 40 40 0 0 1 90 55" fill="none" stroke="'+color+'" stroke-width="9" stroke-linecap="round" stroke-dasharray="'+T+'" stroke-dashoffset="'+off+'"/></svg>';
 }
 
-/* ===== PESTAÑA: HOY ===== */
+function ritualStepsHTML(current,total){
+  let h='';
+  for(let i=1;i<=total;i++){
+    if(i>1) h+='<div class="rline'+(i<=current?' done':'')+'"></div>';
+    h+='<div class="rstep'+(i===current?' active':(i<current?' done':''))+'">'+(i<current?'✓':i)+'</div>';
+  }
+  return '<div class="rsteps">'+h+'</div>';
+}
+
+/* ===== PESTAÑA: HOY (DASHBOARD UNIFICADO) ===== */
 function renderHoy(){
   const hoy=todayStr(), L=state.logs[hoy]||{}, pg=principal();
+  const dg=diagnose(hoy), w=dg.w, s=streak(hoy), rec=record(hoy);
+
   app.appendChild(el('<div style="margin-bottom:14px;"><h1>Hoy</h1><div class="sub">Tu potencial, sin quemarte.</div></div>'));
   if(mem) app.appendChild(el('<div class="card" style="border-color:var(--warn); color:var(--warn); font-size:13px;">Almacenamiento no disponible: los datos viven solo en esta sesión.</div>'));
 
@@ -368,6 +387,43 @@ function renderHoy(){
     return;
   }
 
+  /* 1. KPIs de Momento (Racha, Récord, Cumplimiento) */
+  app.appendChild(el('<div class="kpis">'+
+    '<div class="kpi"><div class="kval"><span style="color:var(--blue);">🔥</span> '+s+'</div><div class="klab">racha</div></div>'+
+    '<div class="kpi"><div class="kval">'+rec+'</div><div class="klab">récord</div></div>'+
+    '<div class="kpi"><div class="kval">'+(w.n?w.cump+'%':'—')+'</div><div class="klab">cumplim. 7d</div></div></div>'));
+
+  /* 2. Gobernadores (Paz mental & Energía) */
+  const gp=w.n?w.paz:null, ge=w.n?w.ener:null;
+  const cp=gp===null?'var(--line)':govColor(gp,dg.tP??null);
+  const ce=ge===null?'var(--line)':govColor(ge,dg.tE??null);
+  const ar=t=>t===null||t===undefined?'':(t>0.3?' ↑':t<-0.3?' ↓':' →');
+  const enR=dg.estado==='quemandose'||dg.estado==='apagado';
+  const tone=enR?{bg:'var(--riskbg)',tx:'var(--risk)'}
+    :(gp!==null&&(gp<6.5||ge<6.5||(dg.tE??0)<=-1||(dg.tP??0)<=-1))?{bg:'var(--warnbg)',tx:'var(--warn)'}
+    :{bg:'var(--calmbg)',tx:'var(--calm)'};
+  const gtxt=gp===null?'Registra tus primeras noches para ver tus gobernadores.'
+    :enR?'Tus gobernadores están pidiendo una pausa. Toca para recalibrar.'
+    :tone.tx==='var(--warn)'?'Alguno de tus gobernadores viene bajando esta semana. Vale la pena mirarlo.'
+    :'Tu ritmo se está sosteniendo.';
+  const gov=el('<div class="card"><div style="display:flex; justify-content:space-between; align-items:center;"><div class="secthead" style="margin:0;">Tus gobernadores · 7 días</div><span style="color:var(--muted);">♡</span></div><div class="gov2" style="margin-top:10px;">'+
+    '<div class="gcell">'+arcSVG(gp??0,cp)+'<div style="margin-top:-6px;"><span class="gval">'+(gp??'—')+'</span><span style="font-size:13px; color:'+cp+';">'+ar(dg.tP)+'</span></div><div class="glab">paz mental</div></div>'+
+    '<div class="gcell">'+arcSVG(ge??0,ce)+'<div style="margin-top:-6px;"><span class="gval">'+(ge??'—')+'</span><span style="font-size:13px; color:'+ce+';">'+ar(dg.tE)+'</span></div><div class="glab">energía</div></div></div>'+
+    '<button class="govmsg" id="gm" style="background:'+tone.bg+'; color:'+tone.tx+';">'+gtxt+'</button></div>');
+  app.appendChild(gov);
+  gov.querySelector('#gm').onclick=()=>{view={name:'review'};render();};
+
+  /* 3. Rituales (Accesos directos) */
+  const rit=el('<div style="display:flex; gap:8px; margin-bottom:12px;">'+
+    '<button class="btn '+(L.am?'':'primary')+'" id="bam" style="margin:0; flex:1; text-align:center;">'+
+      (L.am?'Mañana ✓':'☀️ Ritual de la mañana')+'</button>'+
+    '<button class="btn '+(L.pm?'':(L.am?'primary':''))+'" id="bpm" style="margin:0; flex:1; text-align:center;">'+
+      (L.pm?'Noche ✓':(L.rec?'Recuperación ✓':'🌙 Ritual de la noche'))+'</button></div>');
+  app.appendChild(rit);
+  rit.querySelector('#bam').onclick=()=>{view={name:'am',step:1};render();};
+  rit.querySelector('#bpm').onclick=()=>{view={name:'pm',step:1,done:[]};render();};
+
+  /* 4. Meta Principal ⭐ */
   if(pg){
     const actsPg=state.actions.filter(a=>a.goalId===pg.id).map(a=>a.id);
     let pgDone=0, pgTotal=0;
@@ -394,15 +450,7 @@ function renderHoy(){
     mp.firstChild.onclick=()=>{view={name:(actsPg.length?'metas':'acts')};render();};
   }
 
-  const rit=el('<div style="display:flex; gap:8px; margin-bottom:12px;">'+
-    '<button class="btn '+(L.am?'':'primary')+'" id="bam" style="margin:0; flex:1; text-align:center;">'+
-      (L.am?'Mañana ✓':'☀️ Ritual de la mañana')+'</button>'+
-    '<button class="btn '+(L.pm?'':(L.am?'primary':''))+'" id="bpm" style="margin:0; flex:1; text-align:center;">'+
-      (L.pm?'Noche ✓':(L.rec?'Recuperación ✓':'🌙 Ritual de la noche'))+'</button></div>');
-  app.appendChild(rit);
-  rit.querySelector('#bam').onclick=()=>{view={name:'am',step:1};render();};
-  rit.querySelector('#bpm').onclick=()=>{view={name:'pm',step:1,done:[]};render();};
-
+  /* 5. Roca de Hoy 🪨 */
   if(L.am&&L.am.roca){
     const a=state.actions.find(x=>x.id===L.am.roca);
     if(a){
@@ -415,6 +463,7 @@ function renderHoy(){
     }
   }
 
+  /* 6. Acciones de Hoy */
   const acc=el('<div class="card"><div class="secthead">Tus acciones de hoy</div><div id="al"></div></div>');
   app.appendChild(acc);
   const al=acc.querySelector('#al');
@@ -422,25 +471,13 @@ function renderHoy(){
   state.actions.forEach(a=>{
     const A=AREAS[a.area], done=doneHoy.includes(a.id);
     al.appendChild(el('<div style="display:flex; align-items:center; gap:9px; padding:7px 0; font-size:13.5px;">'+
-      '<span style="color:'+(done?'var(--calm)':'var(--muted)')+';">'+(done?'✓':'○')+'</span>'+
+      '<span style="color:'+(done?'var(--calm)':'var(--muted)')+'; font-weight:600;">'+(done?'✓':'○')+'</span>'+
       '<span style="flex:1;">'+esc(a.name)+'</span>'+
       '<span class="atag" style="background:'+A.color+'1c; color:'+A.color+';">'+A.nom+'</span></div>'));
   });
-}
 
-/* ===== PESTAÑA: PROGRESO (el dashboard del mockup) ===== */
-function renderProg(){
-  const hoy=todayStr(), dg=diagnose(hoy), w=dg.w;
-  const s=streak(hoy), rec=record(hoy);
-
-  app.appendChild(el('<div style="margin-bottom:14px;"><h1>Progreso</h1></div>'));
-
-  app.appendChild(el('<div class="kpis">'+
-    '<div class="kpi"><div class="kval"><span style="color:var(--blue);">🔥</span> '+s+'</div><div class="klab">racha</div></div>'+
-    '<div class="kpi"><div class="kval">'+rec+'</div><div class="klab">récord</div></div>'+
-    '<div class="kpi"><div class="kval">'+(w.n?w.cump+'%':'—')+'</div><div class="klab">cumplim. 7d</div></div></div>'));
-
-  const hm=el('<div class="card"><div class="secthead">Últimas 4 semanas</div><div class="heat" id="hm"></div>'+
+  /* 7. Constancia (Heatmap 4 semanas) */
+  const hm=el('<div class="card"><div class="secthead">Constancia · últimas 4 semanas</div><div class="heat" id="hm"></div>'+
     '<div class="legend"><span><i style="background:var(--blue);"></i>cumplido</span>'+
     '<span><i style="background:var(--heat-partial);"></i>parcial</span>'+
     '<span><i style="background:var(--recov);"></i>recuperación</span></div></div>');
@@ -457,25 +494,7 @@ function renderProg(){
     cell.title=d; grid.appendChild(cell);
   }
 
-  const gp=w.n?w.paz:null, ge=w.n?w.ener:null;
-  const cp=gp===null?'var(--line)':govColor(gp,dg.tP??null);
-  const ce=ge===null?'var(--line)':govColor(ge,dg.tE??null);
-  const ar=t=>t===null||t===undefined?'':(t>0.3?' ↑':t<-0.3?' ↓':' →');
-  const enR=dg.estado==='quemandose'||dg.estado==='apagado';
-  const tone=enR?{bg:'var(--riskbg)',tx:'var(--risk)'}
-    :(gp!==null&&(gp<6.5||ge<6.5||(dg.tE??0)<=-1||(dg.tP??0)<=-1))?{bg:'var(--warnbg)',tx:'var(--warn)'}
-    :{bg:'var(--calmbg)',tx:'var(--calm)'};
-  const gtxt=gp===null?'Registra tus primeras noches para ver tus gobernadores.'
-    :enR?'Tus gobernadores están pidiendo una pausa. Toca para recalibrar.'
-    :tone.tx==='var(--warn)'?'Alguno de tus gobernadores viene bajando esta semana. Vale la pena mirarlo.'
-    :'Tu ritmo se está sosteniendo.';
-  const gov=el('<div class="card"><div style="display:flex; justify-content:space-between; align-items:center;"><div class="secthead" style="margin:0;">Tus gobernadores · 7 días</div><span style="color:var(--muted);">♡</span></div><div class="gov2" style="margin-top:10px;">'+
-    '<div class="gcell">'+arcSVG(gp??0,cp)+'<div style="margin-top:-6px;"><span class="gval">'+(gp??'—')+'</span><span style="font-size:13px; color:'+cp+';">'+ar(dg.tP)+'</span></div><div class="glab">paz mental</div></div>'+
-    '<div class="gcell">'+arcSVG(ge??0,ce)+'<div style="margin-top:-6px;"><span class="gval">'+(ge??'—')+'</span><span style="font-size:13px; color:'+ce+';">'+ar(dg.tE)+'</span></div><div class="glab">energía</div></div></div>'+
-    '<button class="govmsg" id="gm" style="background:'+tone.bg+'; color:'+tone.tx+';">'+gtxt+'</button></div>');
-  app.appendChild(gov);
-  gov.querySelector('#gm').onclick=()=>{view={name:'review'};render();};
-
+  /* 8. Acceso a Revisión Semanal */
   const rv=el('<button class="row"><span><div style="font-size:14px; font-weight:600;">Revisión semanal</div>'+
     '<div class="sub" style="margin:0; font-size:11.5px;">estado, balance de áreas y avance de metas</div></span>'+
     '<span style="color:var(--muted);">›</span></button>');
@@ -526,6 +545,7 @@ function renderAM(){
   const back=el('<button class="back">← Volver</button>');
   app.appendChild(back);
   back.firstChild.onclick=()=>{view={name:'hoy'};render();};
+  app.appendChild(el(ritualStepsHTML(step,4)));
 
   if(step===1){
     const c=el('<div class="card"><div class="secthead">Mañana · 1 de 4 · Responsabilidad</div>'+
@@ -596,6 +616,7 @@ function renderPM(){
   const back=el('<button class="back">← Volver</button>');
   app.appendChild(back);
   back.firstChild.onclick=()=>{view={name:'hoy'};render();};
+  app.appendChild(el(ritualStepsHTML(step,4)));
   const roca=(state.logs[hoy]&&state.logs[hoy].am)?state.logs[hoy].am.roca:null;
 
   if(step===1){
@@ -628,7 +649,9 @@ function renderPM(){
     const c=el('<div class="card"><div class="secthead">Noche · 2 de 4 · Gratitud (Atracción)</div>'+
       '<div class="q">Tres cosas de hoy que agradeces</div>'+
       '<div class="sub">Eres un imán de tus pensamientos predominantes. Cierra el día apuntando al norte.</div>'+
-      '<input type="text" id="g1" placeholder="1."><input type="text" id="g2" placeholder="2."><input type="text" id="g3" placeholder="3.">'+
+      '<input type="text" id="g1" placeholder="Algo que salió bien hoy…">'+
+      '<input type="text" id="g2" placeholder="Alguien o un gesto que aprecio…">'+
+      '<input type="text" id="g3" placeholder="Un momento o aprendizaje del día…">'+
       '<button class="btn primary" id="n">Continuar</button></div>');
     app.appendChild(c);
     c.querySelector('#n').onclick=()=>{
@@ -656,8 +679,17 @@ function renderPM(){
   }
 }
 function scaleInto(node,fn){
-  for(let i=1;i<=10;i++){ const b=document.createElement('button');
-    b.textContent=i; b.onclick=()=>fn(i); node.appendChild(b); }
+  for(let i=1;i<=10;i++){
+    const b=document.createElement('button');
+    b.textContent=i;
+    b.onclick=()=>{
+      const all=node.querySelectorAll('button');
+      all.forEach(btn=>btn.classList.remove('picked'));
+      b.classList.add('picked');
+      setTimeout(()=>fn(i),180);
+    };
+    node.appendChild(b);
+  }
 }
 
 /* ===== SUSTITUIR ===== */
@@ -678,7 +710,7 @@ function openSustituir(){
 
 /* ===== METAS ===== */
 function renderMetas(){
-  const back=el('<button class="back">← Ajustes</button>');
+  const back=el('<button class="back">← Volver</button>');
   app.appendChild(back);
   back.firstChild.onclick=()=>{view={name:'ajustes'};render();};
 
@@ -755,7 +787,7 @@ function renderMetas(){
 
 /* ===== ACCIONES ===== */
 function renderActs(){
-  const back=el('<button class="back">← Ajustes</button>');
+  const back=el('<button class="back">← Volver</button>');
   app.appendChild(back);
   back.firstChild.onclick=()=>{view={name:'ajustes'};render();};
 
@@ -830,7 +862,7 @@ function renderActs(){
 
 /* ===== LOGROS ===== */
 function renderLogros(){
-  const back=el('<button class="back">← Ajustes</button>');
+  const back=el('<button class="back">← Volver</button>');
   app.appendChild(back);
   back.firstChild.onclick=()=>{view={name:'ajustes'};render();};
 
@@ -857,9 +889,9 @@ function renderLogros(){
 /* ===== REVISIÓN SEMANAL ===== */
 function renderReview(){
   const hoy=todayStr(), dg=diagnose(hoy), m=META_E[dg.estado], w=dg.w;
-  const back=el('<button class="back">← Progreso</button>');
+  const back=el('<button class="back">← Volver</button>');
   app.appendChild(back);
-  back.firstChild.onclick=()=>{view={name:'prog'};render();};
+  back.firstChild.onclick=()=>{view={name:'hoy'};render();};
 
   const c=el('<div class="card"><div class="q">Revisión semanal</div>'+
     '<div style="display:flex; align-items:center; gap:10px; margin-top:12px;">'+
