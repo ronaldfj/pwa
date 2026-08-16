@@ -283,8 +283,20 @@ function toast(t){ const el=document.getElementById('toast');
 function principal(){ return (state.goals||[]).find(g=>g.principal) || null; }
 
 /* ===== MOTOR ===== */
+// Umbrales del método (regla no negociable #1 en CLAUDE.md): única fuente de verdad,
+// usados por diagnose(), govColor() y el tono de "Tus gobernadores" en renderHoy().
+const MIN_NOCHES_CALIBRACION = 5;   // <5 registros pm en 7d => estado "calibrando", sin diagnóstico
+const UMBRAL_GOV_RIESGO = 5;        // paz/energía por debajo de esto = riesgo de gobernador
+const UMBRAL_GOV_ALERTA = 6.5;      // por debajo de esto (sin llegar a riesgo) = alerta temprana visual
+const UMBRAL_TENDENCIA_RIESGO = -2; // caída vs. semana previa que dispara riesgo
+const UMBRAL_TENDENCIA_ALERTA = -1; // caída menor que solo amerita alerta visual
+const UMBRAL_CUMPLIMIENTO_ALTO = 70; // % cumplimiento 7d para considerarse "alto"
+
 function firstLog(){ const k=Object.keys(state.logs).sort(); return k.length?k[0]:null; }
 function dayCounts(L){ return L && (L.am || L.pm); }
+// Recorre TODO el historial desde el primer log cada vez (nunca se guarda un contador,
+// regla #4): así la racha jamás puede desincronizarse de logs si se edita/borra un día.
+// rec => congela (ni suma ni corta); am/pm => suma; día vacío => corta (regla #2/#3).
 function streak(upTo){
   const start=firstLog(); if(!start) return 0;
   let s=0,d=start;
@@ -293,6 +305,7 @@ function streak(upTo){
     d=addDays(d,1); }
   return s;
 }
+// Igual que streak(), pero conserva la racha más larga vista en el historial (récord).
 function record(upTo){
   const start=firstLog(); if(!start) return 0;
   let s=0,b=0,d=start;
@@ -301,6 +314,9 @@ function record(upTo){
     d=addDays(d,1); }
   return b;
 }
+// Promedios de una ventana de 7 días calendario terminando en (endDate - off).
+// Solo cuentan las noches con pm registrado: un día sin registro no entra al promedio,
+// solo corta la racha (regla #3) — nunca se castiga un promedio por días faltantes.
 function winStats(endDate,off){
   let n=0,cum=0,paz=0,ener=0;
   for(let i=0;i<7;i++){ const L=state.logs[addDays(endDate,-off-i)];
@@ -308,14 +324,18 @@ function winStats(endDate,off){
   if(!n) return {n:0};
   return {n,cump:Math.round(cum/n*100),paz:Math.round(paz/n*10)/10,ener:Math.round(ener/n*10)/10};
 }
+// tP/tE (tendencia) quedan en null si la semana previa no tiene al menos
+// MIN_NOCHES_CALIBRACION registros — comparar contra una base con muy pocos datos
+// daría una tendencia engañosa, así que se prefiere "sin dato" a un falso positivo.
 function diagnose(endDate){
   const w=winStats(endDate,0);
-  if(w.n<5) return {estado:'calibrando',w};
+  if(w.n<MIN_NOCHES_CALIBRACION) return {estado:'calibrando',w};
   const p=winStats(endDate,7);
   let tP=null,tE=null;
-  if(p.n>=5){ tP=Math.round((w.paz-p.paz)*10)/10; tE=Math.round((w.ener-p.ener)*10)/10; }
-  const riesgo = w.paz<5||w.ener<5||(tP!==null&&tP<=-2)||(tE!==null&&tE<=-2);
-  const alto = w.cump>=70;
+  if(p.n>=MIN_NOCHES_CALIBRACION){ tP=Math.round((w.paz-p.paz)*10)/10; tE=Math.round((w.ener-p.ener)*10)/10; }
+  const riesgo = w.paz<UMBRAL_GOV_RIESGO||w.ener<UMBRAL_GOV_RIESGO
+    ||(tP!==null&&tP<=UMBRAL_TENDENCIA_RIESGO)||(tE!==null&&tE<=UMBRAL_TENDENCIA_RIESGO);
+  const alto = w.cump>=UMBRAL_CUMPLIMIENTO_ALTO;
   return {estado: alto?(riesgo?'quemandose':'enmarcha'):(riesgo?'apagado':'aladeriva'), w,tP,tE};
 }
 const META_E={
@@ -326,8 +346,8 @@ const META_E={
   apagado:{nom:'Apagado',color:'#1F66C1',bg:'#E4EEF9',msg:'Tanque y rumbo bajos, sin culpa. Mañana: recuperación. Al volver, retoma solo tu acción más pequeña y tu afirmación.'}
 };
 function govColor(v,t){
-  if(v<5||(t!==null&&t<=-2)) return '#D64545';
-  if(v<6.5||(t!==null&&t<=-1)) return '#E8940F';
+  if(v<UMBRAL_GOV_RIESGO||(t!==null&&t<=UMBRAL_TENDENCIA_RIESGO)) return '#D64545';
+  if(v<UMBRAL_GOV_ALERTA||(t!==null&&t<=UMBRAL_TENDENCIA_ALERTA)) return '#E8940F';
   return '#1D9E75';
 }
 function weekIdx(){ const d=new Date(); const onejan=new Date(d.getFullYear(),0,1);
@@ -400,7 +420,7 @@ function renderHoy(){
   const ar=t=>t===null||t===undefined?'':(t>0.3?' ↑':t<-0.3?' ↓':' →');
   const enR=dg.estado==='quemandose'||dg.estado==='apagado';
   const tone=enR?{bg:'var(--riskbg)',tx:'var(--risk)'}
-    :(gp!==null&&(gp<6.5||ge<6.5||(dg.tE??0)<=-1||(dg.tP??0)<=-1))?{bg:'var(--warnbg)',tx:'var(--warn)'}
+    :(gp!==null&&(gp<UMBRAL_GOV_ALERTA||ge<UMBRAL_GOV_ALERTA||(dg.tE??0)<=UMBRAL_TENDENCIA_ALERTA||(dg.tP??0)<=UMBRAL_TENDENCIA_ALERTA))?{bg:'var(--warnbg)',tx:'var(--warn)'}
     :{bg:'var(--calmbg)',tx:'var(--calm)'};
   const gtxt=gp===null?'Registra tus primeras noches para ver tus gobernadores.'
     :enR?'Tus gobernadores están pidiendo una pausa. Toca para recalibrar.'
