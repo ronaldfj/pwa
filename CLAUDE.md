@@ -13,11 +13,15 @@ del dueño ("Sistema MP3": Meta → Propósito → Plan → Primer Paso, con 6 �
 de vida). Tesis del producto: **éxito sostenible sin burnout** — la app es la
 única de hábitos que te premia por descansar cuando lo necesitas.
 
-- Un solo usuario (el dueño). Sin backend, sin cuentas, sin analítica.
-- Un solo archivo: `index.html` contiene CSS + JS + toda la lógica.
-- Hosting: Firebase Hosting. Datos: localStorage del dispositivo
-  (clave `fenix-v2`), con adaptador que también soporta window.storage
-  cuando corre como artefacto en claude.ai.
+- **Multiusuario.** Cada persona tiene su propia cuenta (Firebase
+  Authentication: email/contraseña o Google) y su propio historial,
+  aislado del resto por `firestore.rules`. Sin analítica de terceros.
+- Dos archivos, sin build step: `index.html` (motor + toda la UI + router)
+  y `firebase-init.js` (SDK de Firebase, auth y capa de datos, cargado
+  como módulo ES nativo vía `<script type="module">`). No agregar un
+  tercer archivo de JS sin una razón equivalente a la que justificó este.
+- Hosting: Firebase Hosting. Backend: Firestore (plan Blaze) — ver
+  "Modelo de datos" y "Autenticación y sesión" más abajo.
 
 ## Reglas NO negociables (el método hecho código)
 
@@ -47,6 +51,11 @@ de vida). Tesis del producto: **éxito sostenible sin burnout** — la app es la
 11. **Las anclas de las escalas 1–10 nunca cambian** (invalidarían el histórico)
     y siempre se muestran junto a la escala.
 
+`state.logs` se reconstruye en memoria desde Firestore (merge de los buckets
+mensuales, ver "Modelo de datos") antes de que el motor lo toque —
+`streak()`, `record()`, `winStats()` y `diagnose()` nunca deben llamarse
+antes de que `cloud.attach()` haya resuelto (ver "Autenticación y sesión").
+
 ## El motor (umbral por umbral)
 
 Ubicación: funciones `streak`, `record`, `winStats`, `diagnose` en index.html.
@@ -67,26 +76,48 @@ Réplica en Dart puro: paquete `fenix_logic` (mismo algoritmo, 12 tests).
 - Fechas: SIEMPRE día local del usuario, clave `yyyy-MM-dd` (`todayStr`).
   Nunca usar UTC/timestamps para el "día".
 
-## Modelo de datos (localStorage, clave `fenix-v2`)
+## Modelo de datos (Firestore)
 
-```js
-state = {
-  theme: 'light'|'dark',
-  goals:   [{ id, name, area, why, hor /*años: 1,2,3,5,10,15,20*/, principal }],
-  actions: [{ id, name, area, goalId /*null = hábito de vida*/ }],
-  logs: { 'yyyy-MM-dd': {
-    rec?: true,                      // día de recuperación (excluyente)
-    am?:  { roca: actionId },        // ritual matutino
-    pm?:  { done:[ids], pct, grat:[3 strings], paz:1-10, ener:1-10 }
-  }},
-  affirmations: [strings],           // rotan por día del mes
-  logros: [strings],                 // lista de victorias (meta: 100)
-  subs: { 'yyyy-MM-dd': n }          // usos del botón Sustituir por día
-}
 ```
+users/{uid}                    // doc de perfil — se reescribe entero en cada save() (barato)
+  {
+    theme: 'light'|'dark',
+    goals:   [{ id, name, area, why, hor /*años: 1,2,3,5,10,15,20*/, principal }],
+    actions: [{ id, name, area, goalId /*null = hábito de vida*/ }],
+    affirmations: [strings],     // rotan por día del mes
+    logros: [strings],           // lista de victorias (meta: 100)
+    subs: { 'yyyy-MM-dd': n }    // usos del botón Sustituir por día
+  }
+
+users/{uid}/logs/{yyyy-MM}     // un doc por mes, mapa de días adentro
+  { 'yyyy-MM-dd': {
+      rec?: true,                      // día de recuperación (excluyente)
+      am?:  { roca: actionId },        // ritual matutino
+      pm?:  { done:[ids], pct, grat:[3 strings], paz:1-10, ener:1-10 }
+  }, ... }
+```
+El cliente (`firebase-init.js`, objeto `cloud`) arma `state.logs` haciendo
+merge de todos los buckets mensuales cargados en un único objeto plano
+`{'yyyy-MM-dd': {...}}` — la misma forma que el motor siempre esperó. Se
+usan buckets mensuales (no un doc único, no un doc por día) para evitar
+tanto el límite de 1 MiB/doc de Firestore como resubir el historial
+completo en cada mutación nocturna; ver el detalle de esta decisión en
+`firebase-init.js`.
+
+**Invariante importante:** todas las mutaciones de `state.logs` en esta
+app tocan únicamente el día de hoy (ritual AM/PM, recuperación) — nunca
+un día pasado. `save()` explota esto para solo escribir el bucket del mes
+actual. Si se agrega edición retroactiva de días pasados, `save()` y
+`cloud.saveCurrentMonthBucket` deben ampliarse para aceptar qué meses
+cambiaron.
+
 Áreas fijas (Sistema MP3 del dueño): espiritual, familiar, fisica,
 financiera, profesional, personal — con sus colores en `AREAS`.
-No renombrar la clave `fenix-v2` (perdería el historial del usuario).
+
+`localStorage['fenix-v2']` es una **clave legada**: solo se lee como
+origen de la migración automática de un dispositivo al primer login (ver
+"Migración de localStorage a Firestore") y nunca se borra sola. Firestore
+es la única fuente de verdad una vez migrado.
 
 ## Estructura de la app (SPA en index.html)
 
@@ -107,21 +138,52 @@ Visión (10+ años) → Meta del año ⭐ → Acciones diarias (→ goalId) →
 Roca de hoy 🪨 → Ritual nocturno → Gobernadores vigilando todo.
 Cada pantalla debe reforzar esta cadena, no fragmentarla.
 
+## Autenticación y sesión
+
+- `onAuthStateChanged` (envuelto en `watchAuth()` de `firebase-init.js`) es
+  la única fuente de verdad de sesión. Hasta su primer disparo, la app se
+  queda en el placeholder "Cargando…" — nunca se pinta login ni dashboard
+  antes de tiempo, para no mostrar un flash de datos de otra cuenta en un
+  dispositivo compartido.
+- En logout (`onAuthStateChanged(null)`), `state` se resetea a su forma
+  vacía por defecto de inmediato, no cuando llegue el próximo login.
+- Se captura explícitamente `auth/account-exists-with-different-credential`
+  (alguien crea cuenta con email/contraseña y luego prueba Google con el
+  mismo correo) con un mensaje claro en vez de fallar en silencio.
+- **Riesgo conocido en iPhone:** Google Sign-In usa `signInWithRedirect` +
+  `getRedirectResult` (no `signInWithPopup`, que no funciona en PWA anclada
+  standalone). Aun así, WebKit a veces expulsa a Safari normal en vez de
+  retornar al ícono anclado tras el consentimiento — probarlo siempre en el
+  dispositivo real, no alcanza con desktop.
+
+## Migración de localStorage a Firestore
+
+Al primer login de un usuario, si existe `localStorage['fenix-v2']` con
+datos no triviales y su doc `users/{uid}` todavía no existe en Firestore,
+se migra automáticamente una sola vez (`maybeMigrateFromLocalStorage` en
+`firebase-init.js`), envuelta en una transacción para que dos dispositivos
+logueándose casi a la vez en una cuenta recién creada no migren dos veces
+ni se pisen. `localStorage['fenix-v2']` **nunca se borra automáticamente**
+tras migrar — queda como respaldo pasivo.
+
 ## Flujo de desarrollo
 
 - Local: Live Server sobre index.html.
+- Prerequisito de infraestructura (una vez, en consola de Firebase):
+  proyecto en plan **Blaze**, **Firestore** en modo Nativo, **Authentication**
+  con Email/contraseña y Google habilitados, y el config de la app Web
+  pegado en `firebaseConfig` dentro de `firebase-init.js`.
 - Deploy: `firebase deploy` (config en firebase.json; sw.js con no-cache).
-- **Al cambiar index.html, subir versión de caché en sw.js**
-  (`const CACHE='fenix-v6-N'` → N+1) o los dispositivos no refrescan.
-- iPhone: PWA anclada desde Safari. iOS puede purgar localStorage tras semanas
-  sin uso → motivo del siguiente hito (sync Firestore).
+  Tras cualquier cambio a `firestore.rules`, además correr
+  `firebase deploy --only firestore:rules`.
+- **Al cambiar index.html o firebase-init.js, subir versión de caché en
+  sw.js** (`const CACHE='fenix-v6-N'` → N+1) o los dispositivos no refrescan.
+- iPhone: PWA anclada desde Safari.
 
 ## Roadmap acordado
 
-1. (Ahora) Uso diario real del dueño; iterar por fricción, no por ideas.
-2. Sync con **Firestore** (proyecto Firebase existente del dueño) — respaldo
-   del historial. Estructura sugerida: doc único `users/{uid}/state` o
-   colección `logs` por día con merge por fecha (upsert idempotente).
+1. (Ahora) Uso diario real de los usuarios; iterar por fricción, no por ideas.
+2. ~~Sync con Firestore~~ — resuelto: es la base del modelo multiusuario.
 3. Notificaciones push web (iOS ≥16.4, PWA anclada) para recordatorio
    mañana/noche.
 4. (Posible futuro) Producto comercial en Flutter: el paquete `fenix_logic`
@@ -134,5 +196,7 @@ Cada pantalla debe reforzar esta cadena, no fragmentarla.
 - No mostrar "Quemándose"/etiquetas de estado como badge permanente.
 - No agregar campos de captura al ritual sin quitar otros (techo de fricción).
 - No usar UTC para fechas de registro.
-- No introducir dependencias/frameworks: el valor de este código es que es
-  un solo archivo legible y sin build step.
+- No introducir dependencias/frameworks salvo el SDK modular de Firebase
+  (cargado vía CDN como módulo ES nativo, sin bundler): es la única
+  excepción, porque sostiene la autenticación y los datos multiusuario. No
+  agregar ningún otro framework ni paso de build.

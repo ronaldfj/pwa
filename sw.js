@@ -1,5 +1,5 @@
-const CACHE='fenix-v6-14';
-const SHELL=['./','./index.html','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
+const CACHE='fenix-v6-17';
+const SHELL=['./','./index.html','./firebase-init.js','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
 self.addEventListener('install',e=>{ e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL))); self.skipWaiting(); });
 self.addEventListener('activate',e=>{ e.waitUntil(caches.keys().then(ks=>Promise.all(
   ks.filter(k=>k!==CACHE).map(k=>caches.delete(k))))); self.clients.claim(); });
@@ -14,5 +14,13 @@ self.addEventListener('fetch',e=>{
     );
     return;
   }
-  e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request)));
+  // También cachea el SDK de Firebase (gstatic.com), no solo el shell local:
+  // sin esto, la app se rompe offline apenas requiere el módulo de Firestore/Auth.
+  e.respondWith(caches.match(e.request).then(r=>{
+    if(r) return r;
+    return fetch(e.request).then(res=>{
+      if(res.ok){ const copy=res.clone(); caches.open(CACHE).then(c=>c.put(e.request,copy)); }
+      return res;
+    });
+  }));
 });

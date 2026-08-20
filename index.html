@@ -55,7 +55,7 @@
   .scale button:hover{border-color:var(--blue);}
   .scale button.picked{background:var(--bluebg); border-color:var(--blue); color:var(--blue); font-weight:700; transform:scale(1.06);}
   .back{background:none; color:var(--muted); font-size:13px; padding:0; margin-bottom:14px; border-radius:0;}
-  input[type=text], select{width:100%; padding:12px; border-radius:10px; border:1px solid var(--line);
+  input[type=text], input[type=password], input[type=email], select{width:100%; padding:12px; border-radius:10px; border:1px solid var(--line);
     background:var(--card2); color:var(--text); font-family:inherit; font-size:14px; margin-top:6px;}
   label{font-size:12px; color:var(--muted);}
   .kpis{display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:12px;}
@@ -133,7 +133,12 @@
 </div></nav>
 <div class="toast" id="toast"></div>
 
-<script>
+<script type="module">
+import {
+  watchAuth, processRedirectResult, signUpWithEmail, signInWithEmailPass,
+  signInWithGoogle, signOutUser, cloud, maybeMigrateFromLocalStorage
+} from './firebase-init.js';
+
 /* ===== ÁREAS (Sistema MP3) ===== */
 const AREAS = {
   espiritual:{nom:'Espiritual',color:'#7C5FB0'}, familiar:{nom:'Familiar',color:'#C25B8A'},
@@ -201,33 +206,12 @@ const REFLEX = [
   { t:'Dieta mental', p:'¿Qué alimentó tu mente esta semana: lo que entró antes de dormir y al despertar te construyó o te drenó?' }
 ];
 
-/* ===== ALMACENAMIENTO (artefacto Claude o navegador) ===== */
-const store={
-  mode:'mem', available:false,
-  async init(){
-    if(window.storage&&window.storage.get){ this.mode='artifact'; this.available=true; return; }
-    try{ localStorage.setItem('__t','1'); localStorage.removeItem('__t');
-      this.mode='local'; this.available=true; }catch(e){ this.mode='mem'; }
-  },
-  async get(k){
-    if(this.mode==='artifact'){ try{ return await window.storage.get(k); }catch(e){ return null; } }
-    if(this.mode==='local'){ const v=localStorage.getItem(k); return v?{value:v}:null; }
-    return null;
-  },
-  async set(k,v){
-    if(this.mode==='artifact'){ try{ await window.storage.set(k,v); }catch(e){} }
-    else if(this.mode==='local'){ try{ localStorage.setItem(k,v); }catch(e){} }
-  },
-  async del(k){
-    if(this.mode==='artifact'){ try{ await window.storage.delete(k); }catch(e){} }
-    else if(this.mode==='local'){ localStorage.removeItem(k); }
-  }
-};
-
 /* ===== ESTADO ===== */
-let state = { actions:[], logs:{}, affirmations:AFIRM_BASE.slice(), logros:LOGROS_SEMILLA.slice(), goals:null, subs:{} };
-let mem = false;
-let view = { name:'hoy' };
+let state = { theme:'light', actions:[], logs:{}, affirmations:AFIRM_BASE.slice(), logros:LOGROS_SEMILLA.slice(), goals:null, subs:{} };
+let currentUser = null;
+let pendingAuthError = null;
+let pendingDataError = null;
+let view = { name:'login' };
 let timerId = null;
 const TABS = { hoy:'hoy', ajustes:'ajustes' };
 function tabOf(name){
@@ -253,10 +237,10 @@ function elapsedTxt(s){ const m=monthsSince(s);
   const y=Math.floor(m/12), r=m%12;
   return 'hace '+y+(y===1?' año':' años')+(r?' '+r+'m':''); }
 async function load(){
-  await store.init(); mem = !store.available;
-  try{ const r = await store.get('fenix-v2');
-    if (r && r.value){ state = Object.assign(state, JSON.parse(r.value)); }
-  }catch(e){}
+  await maybeMigrateFromLocalStorage(currentUser.uid);
+  await cloud.attach(currentUser.uid, onRemoteChange);
+  state = Object.assign(state, cloud.profile || {});
+  state.logs = cloud.flatLogs();
   applyTheme();
   if (!state.goals){
     state.goals = METAS_SEMILLA.map((m,i)=>({ id:'g'+i, name:m.name, area:m.area, why:m.why, hor:m.hor, principal:false }));
@@ -272,11 +256,26 @@ async function load(){
   const AFIRM_OLD = ['Me quiero a mí mismo y me acepto incondicionalmente.','Soy responsable: soy el arquitecto de mi propio destino.','Soy capaz de lograr lo que me propongo, con paz y con energía.'];
   if (!state.affirmations || JSON.stringify(state.affirmations)===JSON.stringify(AFIRM_OLD)){ state.affirmations=AFIRM_BASE.slice(); mig=true; }
   if(mig) await save();
+  view = { name:'hoy' };
+  render();
+}
+// Cambios remotos (otro dispositivo/pestaña) llegan por onSnapshot en cloud.attach().
+// Solo dispara en cambios que NO sean nuestras propias escrituras pendientes.
+function onRemoteChange(){
+  state = Object.assign(state, cloud.profile || {});
+  state.logs = cloud.flatLogs();
   render();
 }
 async function save(){
-  if (mem) return;
-  await store.set('fenix-v2', JSON.stringify(state));
+  if (!currentUser) return;
+  await cloud.saveProfile({
+    theme: state.theme, goals: state.goals, actions: state.actions,
+    affirmations: state.affirmations, logros: state.logros, subs: state.subs
+  });
+  const hoy = todayStr();
+  // Invariante: toda mutación de logs en esta app toca solo el día de hoy
+  // (ritual AM/PM, recuperación) — ver nota en cloud.saveCurrentMonthBucket.
+  if (state.logs[hoy] !== undefined) await cloud.saveCurrentMonthBucket(hoy, state.logs[hoy]);
 }
 function toast(t){ const el=document.getElementById('toast');
   el.textContent=t; el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),2300); }
@@ -360,14 +359,17 @@ function esc(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;'
 function render(){
   if(timerId){ clearInterval(timerId); timerId=null; }
   app.innerHTML='';
-  const inRitual = view.name==='am'||view.name==='pm';
-  nav.style.display = inRitual ? 'none' : 'flex';
+  const noChrome = view.name==='am'||view.name==='pm'||view.name==='login';
+  nav.style.display = noChrome ? 'none' : 'flex';
   fab.style.display = (view.name==='hoy' && state.actions.length) ? 'block' : 'none';
-  const t=tabOf(view.name);
-  document.getElementById('nv-hoy').className = t==='hoy'?'on':'';
-  document.getElementById('nv-aj').className = t==='ajustes'?'on':'';
+  if(view.name!=='login'){
+    const t=tabOf(view.name);
+    document.getElementById('nv-hoy').className = t==='hoy'?'on':'';
+    document.getElementById('nv-aj').className = t==='ajustes'?'on':'';
+  }
   ({hoy:renderHoy, ajustes:renderAjustes, am:renderAM, pm:renderPM,
-    metas:renderMetas, acts:renderActs, logros:renderLogros, review:renderReview})[view.name]();
+    metas:renderMetas, acts:renderActs, logros:renderLogros, review:renderReview,
+    login:renderLogin})[view.name]();
   window.scrollTo(0,0);
 }
 document.getElementById('nv-hoy').onclick=()=>{view={name:'hoy'};render();};
@@ -390,13 +392,59 @@ function ritualStepsHTML(current,total){
   return '<div class="rsteps">'+h+'</div>';
 }
 
+/* ===== LOGIN / CREAR CUENTA ===== */
+function renderLogin(){
+  app.appendChild(el('<div style="margin-top:30px; margin-bottom:14px; text-align:center;"><h1>Fénix</h1><div class="sub">Tu potencial, sin quemarte.</div></div>'));
+
+  if(currentUser && pendingDataError){
+    const derr = pendingDataError;
+    const dc=el('<div class="card">'+
+      '<div class="q">No pudimos cargar tus datos</div>'+
+      '<div class="msgbox" style="color:var(--risk); margin-top:8px;">'+esc(derr)+'</div>'+
+      '<button class="btn primary" id="retry">Reintentar</button>'+
+      '<button class="btn ghost" id="so">Cerrar sesión</button></div>');
+    app.appendChild(dc);
+    dc.querySelector('#retry').onclick=()=>{ pendingDataError=null; onAuthChange(currentUser); };
+    dc.querySelector('#so').onclick=async()=>{ pendingDataError=null; await signOutUser(); };
+    return;
+  }
+
+  const mode = view.mode || 'login';
+  const err = pendingAuthError; pendingAuthError = null;
+  const c=el('<div class="card">'+
+    '<div class="q">'+(mode==='signup'?'Crear cuenta':'Iniciar sesión')+'</div>'+
+    (err?'<div class="msgbox" style="color:var(--risk); margin-top:8px;">'+esc(err)+'</div>':'')+
+    '<label for="em" style="display:block; margin-top:10px;">Correo</label>'+
+    '<input type="email" id="em" placeholder="tucorreo@ejemplo.com" autocomplete="email">'+
+    '<label for="pw" style="display:block; margin-top:8px;">Contraseña</label>'+
+    '<input type="password" id="pw" placeholder="Mínimo 6 caracteres" autocomplete="'+(mode==='signup'?'new-password':'current-password')+'">'+
+    '<button class="btn primary" id="go">'+(mode==='signup'?'Crear cuenta':'Entrar')+'</button>'+
+    '<button class="btn" id="google" style="text-align:center;">Continuar con Google</button>'+
+    '<button class="btn ghost" id="toggle">'+(mode==='signup'?'Ya tengo cuenta':'Crear una cuenta nueva')+'</button>'+
+    '</div>');
+  app.appendChild(c);
+  const submit=async()=>{
+    const email=c.querySelector('#em').value.trim(), pass=c.querySelector('#pw').value;
+    if(!email||!pass){ toast('Completa correo y contraseña.'); return; }
+    const fn = mode==='signup'?signUpWithEmail:signInWithEmailPass;
+    const e2 = await fn(email,pass);
+    if(e2){ pendingAuthError=e2; render(); }
+  };
+  c.querySelector('#go').onclick=submit;
+  c.querySelector('#pw').onkeydown=(ev)=>{ if(ev.key==='Enter') submit(); };
+  c.querySelector('#google').onclick=async()=>{
+    const e2 = await signInWithGoogle();
+    if(e2){ pendingAuthError=e2; render(); }
+  };
+  c.querySelector('#toggle').onclick=()=>{ view={name:'login', mode: mode==='signup'?'login':'signup'}; render(); };
+}
+
 /* ===== PESTAÑA: HOY (DASHBOARD UNIFICADO) ===== */
 function renderHoy(){
   const hoy=todayStr(), L=state.logs[hoy]||{}, pg=principal();
   const dg=diagnose(hoy), w=dg.w, s=streak(hoy), rec=record(hoy);
 
   app.appendChild(el('<div style="margin-bottom:14px;"><h1>Hoy</h1><div class="sub">Tu potencial, sin quemarte.</div></div>'));
-  if(mem) app.appendChild(el('<div class="card" style="border-color:var(--warn); color:var(--warn); font-size:13px;">Almacenamiento no disponible: los datos viven solo en esta sesión.</div>'));
 
   if(!state.actions.length){
     const c=el('<div class="card"><div class="q">Define tus acciones diarias</div>'+
@@ -548,12 +596,19 @@ function renderAjustes(){
     app.appendChild(r);
     r.firstChild.onclick=()=>{view={name:it.v};render();};
   });
+  const acc=el('<div class="card" style="font-size:13px; color:var(--muted);">Sesión: '+esc(currentUser.email||'cuenta de Google')+'</div>');
+  app.appendChild(acc);
+  const lo=el('<button class="btn ghost" style="margin-top:8px;">Cerrar sesión</button>');
+  app.appendChild(lo);
+  lo.firstChild.onclick=async()=>{ await signOutUser(); };
+
   const rst=el('<button class="btn ghost" style="margin-top:20px;">Borrar todos mis datos</button>');
   app.appendChild(rst);
   rst.firstChild.onclick=async()=>{
     if(confirm('¿Borrar todos tus datos (metas, acciones, registros y logros)? No se puede deshacer.')){
-      state={actions:[],logs:{},affirmations:AFIRM_BASE.slice(),logros:[],goals:[],subs:{}};
-      await store.del('fenix-v2');
+      await cloud.deleteAllUserData(currentUser.uid);
+      cloud.profile = null; cloud.logBuckets = {};
+      state={theme:'light',actions:[],logs:{},affirmations:AFIRM_BASE.slice(),logros:[],goals:[],subs:{}};
       await save(); view={name:'hoy'}; render();
     }
   };
@@ -979,7 +1034,33 @@ function renderReview(){
 }
 
 if('serviceWorker' in navigator){ try{ navigator.serviceWorker.register('./sw.js'); }catch(e){} }
-load();
+
+// onAuthStateChanged es la única fuente de verdad de sesión: hasta su primer
+// disparo no se pinta login ni dashboard (se queda el "Cargando…" del HTML base),
+// para no mostrar un flash de datos de otra cuenta en un dispositivo compartido.
+async function onAuthChange(user){
+  if(user){
+    currentUser = user;
+    try{
+      await load();
+    }catch(e){
+      pendingDataError = 'No se pudo conectar con tus datos: ' + ((e && e.message) || e);
+      view = { name:'login' };
+      render();
+    }
+  } else {
+    currentUser = null;
+    cloud.detach();
+    state = { actions:[], logs:{}, affirmations:AFIRM_BASE.slice(), logros:LOGROS_SEMILLA.slice(), goals:null, subs:{} };
+    view = { name:'login' };
+    render();
+  }
+}
+(async function boot(){
+  const err = await processRedirectResult();
+  if(err) pendingAuthError = err;
+  watchAuth(onAuthChange);
+})();
 </script>
 </body>
 </html>
