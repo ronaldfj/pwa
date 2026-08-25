@@ -185,18 +185,6 @@ const AFIRM_BASE = [
   'Perdono a todo el mundo por todo lo que me han hecho.',
   'Me gustan las personas y a las personas les gusto yo.'
 ];
-const LOGROS_SEMILLA = [
-  'Crear un chat funcional para una red','Graduarme de perito en computación y bachiller industrial',
-  'Obtener ofertas de trabajo al salir del bachillerato','Pagarme mi propia universidad',
-  'Sacar 3 años de ingeniería en limpio','Comprar mi primer vehículo al contado',
-  'Ganarme la amistad de muchas personas en cada trabajo','Obtener reconocimiento de personas que ni imaginaba',
-  'Enamorarme de Flor realmente','Enamorar a Flor','Casarme con Flor','Tener 2 hijos varones',
-  'Graduarme de licenciado en administración de negocios','Graduarme de postgrado en proyectos',
-  'Sacar la certificación de Tipping Point','Ganarme la confianza de mis jefes en todos los trabajos',
-  'Migrar el core bancario del BAM','Servir en casa de Dios','Encontrarme con Dios como papá',
-  'Reconciliarme con mi papá','Conseguir en 3 años ser jefe','Conseguir en 5 años ser gerente',
-  'Formar un equipo de 20 personas','Tomar la decisión de comprar una casa'
-];
 const REFLEX = [
   { t:'Perdón', p:'¿Hay alguien —incluyéndote— a quien necesitas perdonar esta semana? Perdonar no es para el otro: es para liberar tu propia mente.' },
   { t:'Relaciones', p:'El 85% de la felicidad viene de tus relaciones. ¿A quién de tu familia le diste esta semana atención de calidad, sin juicio?' },
@@ -207,7 +195,7 @@ const REFLEX = [
 ];
 
 /* ===== ESTADO ===== */
-let state = { theme:'light', actions:[], logs:{}, affirmations:AFIRM_BASE.slice(), logros:LOGROS_SEMILLA.slice(), goals:null, subs:{} };
+let state = { theme:'light', actions:[], logs:{}, affirmations:AFIRM_BASE.slice(), logros:[], goals:null, subs:{} };
 let currentUser = null;
 let pendingAuthError = null;
 let pendingDataError = null;
@@ -239,11 +227,15 @@ function elapsedTxt(s){ const m=monthsSince(s);
 async function load(){
   await maybeMigrateFromLocalStorage(currentUser.uid);
   await cloud.attach(currentUser.uid, onRemoteChange);
+  // Cuenta recién creada: sin perfil en Firestore y sin datos migrados desde
+  // localStorage. Se decide ANTES del merge de abajo (que puede volver
+  // state.goals truthy) para llevarla a la bienvenida en vez de a Hoy.
+  const isNewAccount = !cloud.profile;
   state = Object.assign(state, cloud.profile || {});
   state.logs = cloud.flatLogs();
   applyTheme();
   if (!state.goals){
-    state.goals = METAS_SEMILLA.map((m,i)=>({ id:'g'+i, name:m.name, area:m.area, why:m.why, hor:m.hor, principal:false }));
+    state.goals = [];
     if (state.meta){ state.goals.unshift({ id:'gm', name:state.meta, area:'personal', why:state.porque||'', hor:1, principal:true }); }
     await save();
   }
@@ -256,7 +248,7 @@ async function load(){
   const AFIRM_OLD = ['Me quiero a mí mismo y me acepto incondicionalmente.','Soy responsable: soy el arquitecto de mi propio destino.','Soy capaz de lograr lo que me propongo, con paz y con energía.'];
   if (!state.affirmations || JSON.stringify(state.affirmations)===JSON.stringify(AFIRM_OLD)){ state.affirmations=AFIRM_BASE.slice(); mig=true; }
   if(mig) await save();
-  view = { name:'hoy' };
+  view = isNewAccount ? { name:'onboarding', step:1 } : { name:'hoy' };
   render();
 }
 // Cambios remotos (otro dispositivo/pestaña) llegan por onSnapshot en cloud.attach().
@@ -359,17 +351,17 @@ function esc(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;'
 function render(){
   if(timerId){ clearInterval(timerId); timerId=null; }
   app.innerHTML='';
-  const noChrome = view.name==='am'||view.name==='pm'||view.name==='login';
+  const noChrome = view.name==='am'||view.name==='pm'||view.name==='login'||view.name==='onboarding';
   nav.style.display = noChrome ? 'none' : 'flex';
   fab.style.display = (view.name==='hoy' && state.actions.length) ? 'block' : 'none';
-  if(view.name!=='login'){
+  if(view.name!=='login' && view.name!=='onboarding'){
     const t=tabOf(view.name);
     document.getElementById('nv-hoy').className = t==='hoy'?'on':'';
     document.getElementById('nv-aj').className = t==='ajustes'?'on':'';
   }
   ({hoy:renderHoy, ajustes:renderAjustes, am:renderAM, pm:renderPM,
     metas:renderMetas, acts:renderActs, logros:renderLogros, review:renderReview,
-    login:renderLogin})[view.name]();
+    login:renderLogin, onboarding:renderOnboarding})[view.name]();
   window.scrollTo(0,0);
 }
 document.getElementById('nv-hoy').onclick=()=>{view={name:'hoy'};render();};
@@ -437,6 +429,86 @@ function renderLogin(){
     if(e2){ pendingAuthError=e2; render(); }
   };
   c.querySelector('#toggle').onclick=()=>{ view={name:'login', mode: mode==='signup'?'login':'signup'}; render(); };
+}
+
+/* ===== BIENVENIDA (solo primer inicio de una cuenta nueva) ===== */
+function renderOnboarding(){
+  const step = view.step || 1;
+  app.appendChild(el(ritualStepsHTML(step,3)));
+
+  if(step===1){
+    app.appendChild(el('<div style="margin-top:4px; margin-bottom:4px; text-align:center;"><h1>Bienvenido a Fénix</h1></div>'));
+    const c=el('<div class="card">'+
+      '<div class="voice" style="font-style:normal; font-weight:600; font-size:16px; padding-top:0;">Tu potencial, sin quemarte.</div>'+
+      '<div class="sub" style="margin-top:10px; line-height:1.6;">Fénix combina el Seminario Fénix de Brian Tracy con tu propio Sistema MP3: <b>Meta → Propósito → Plan → Primer Paso</b>, en 6 áreas de vida.</div>'+
+      '<div class="sub" style="margin-top:10px; line-height:1.6;">Cada mañana, un ritual breve. Cada noche, registras qué cumpliste y cómo estás. Dos números mandan sobre todo lo demás: tu <b>paz mental</b> y tu <b>energía</b> — si bajan, la app frena contigo, nunca te empuja a hacer más.</div>'+
+      '<div class="sub" style="margin-top:10px; line-height:1.6;">Un día de descanso congela tu racha, no la rompe: el descanso es parte del método.</div>'+
+      '<div class="sub" style="margin-top:10px; line-height:1.6;">Vamos a dejarte listo en dos pasos.</div>'+
+      '<button class="btn primary" id="n">Empezar</button></div>');
+    app.appendChild(c);
+    c.querySelector('#n').onclick=()=>{view.step=2;render();};
+  } else if(step===2){
+    const c=el('<div class="card"><div class="secthead">Paso 1 de 2 · Tu primera meta</div>'+
+      '<div class="q" style="margin-top:2px;">¿Qué quieres lograr este año?</div>'+
+      '<div class="sub" style="margin-top:4px;">Clara, como si ya tuviera fecha. Será tu meta principal ⭐: la que visualizas cada mañana. Si prefieres explorarla con calma, puedes saltar este paso.</div>'+
+      '<label for="gn" style="display:block; margin-top:12px;">Meta</label>'+
+      '<input type="text" id="gn" placeholder="Ej. Ponerme en forma">'+
+      '<label for="gw" style="display:block; margin-top:8px;">Tu porqué (opcional)</label>'+
+      '<input type="text" id="gw" placeholder="¿Por qué esta meta vale tu tiempo?">'+
+      '<label for="ga" style="display:block; margin-top:8px;">Área</label><select id="ga">'+
+      Object.keys(AREAS).map(k=>'<option value="'+k+'">'+AREAS[k].nom+'</option>').join('')+
+      '</select>'+
+      '<button class="btn primary" id="n">Crear mi meta y continuar</button>'+
+      '<button class="btn ghost" id="skip">Prefiero explorarlo primero</button></div>');
+    app.appendChild(c);
+    c.querySelector('#n').onclick=async()=>{
+      const name=c.querySelector('#gn').value.trim();
+      if(!name){ toast('Escribe tu meta, o toca "Prefiero explorarlo primero".'); return; }
+      state.goals=state.goals||[];
+      state.goals.push({id:'g'+Date.now(), name, why:c.querySelector('#gw').value.trim(),
+        area:c.querySelector('#ga').value, hor:1, principal:true, created:todayStr()});
+      await save();
+      view.step=3; render();
+    };
+    c.querySelector('#skip').onclick=()=>{view.step=3;render();};
+  } else {
+    view.chosen = view.chosen || [];
+    const c=el('<div class="card"><div class="secthead">Paso 2 de 2 · Tus acciones diarias</div>'+
+      '<div class="q" style="margin-top:2px;">¿Qué harás cada día?</div>'+
+      '<div class="sub" style="margin-top:4px;">Elige 1 a 3 para empezar (recomendado 3, máximo 5). El método pide profundidad, no volumen — puedes ajustar esto después en Ajustes.</div>'+
+      '<div id="list"></div>'+
+      '<button class="btn primary" id="n">Terminar</button>'+
+      '<button class="btn ghost" id="skip">Prefiero elegirlas después</button></div>');
+    app.appendChild(c);
+    const list=c.querySelector('#list');
+    SUGERIDAS.forEach(s=>{
+      const A=AREAS[s.area], on=view.chosen.includes(s.name);
+      const b=document.createElement('button');
+      b.className='act'+(on?' on':'');
+      b.innerHTML='<span class="cb">'+(on?'✓':'')+'</span><span class="aname">'+esc(s.name)+'</span>'+
+        '<span class="atag" style="background:'+A.color+'1c; color:'+A.color+';">'+A.nom+'</span>';
+      b.onclick=()=>{
+        const i=view.chosen.indexOf(s.name);
+        if(i>=0) view.chosen.splice(i,1);
+        else if(view.chosen.length>=5){ toast('Máximo 5. Suelta una primero.'); return; }
+        else view.chosen.push(s.name);
+        render();
+      };
+      list.appendChild(b);
+    });
+    c.querySelector('#n').onclick=async()=>{
+      if(!view.chosen.length){ toast('Elige al menos una, o toca "Prefiero elegirlas después".'); return; }
+      state.actions=state.actions||[];
+      const pg=principal();
+      SUGERIDAS.filter(s=>view.chosen.includes(s.name)).forEach((s,i)=>{
+        state.actions.push({id:'a'+Date.now()+i, name:s.name, area:s.area, goalId:(pg&&pg.area===s.area)?pg.id:null});
+      });
+      await save();
+      view={name:'hoy'}; render();
+      toast('¡Todo listo! Así arranca tu primer día.');
+    };
+    c.querySelector('#skip').onclick=()=>{ view={name:'hoy'}; render(); };
+  }
 }
 
 /* ===== PESTAÑA: HOY (DASHBOARD UNIFICADO) ===== */
@@ -912,7 +984,7 @@ function renderActs(){
     };
     const sug=SUGERIDAS.filter(s=>!state.actions.some(a=>a.name===s.name));
     if(sug.length){
-      const sc=el('<div class="card"><div class="secthead">Sugeridas desde tus metas del Sistema MP3</div><div id="sl"></div></div>');
+      const sc=el('<div class="card"><div class="secthead">Ideas para empezar · Sistema MP3</div><div id="sl"></div></div>');
       app.appendChild(sc);
       const sl=sc.querySelector('#sl');
       sug.forEach(s=>{
@@ -1051,7 +1123,7 @@ async function onAuthChange(user){
   } else {
     currentUser = null;
     cloud.detach();
-    state = { actions:[], logs:{}, affirmations:AFIRM_BASE.slice(), logros:LOGROS_SEMILLA.slice(), goals:null, subs:{} };
+    state = { actions:[], logs:{}, affirmations:AFIRM_BASE.slice(), logros:[], goals:null, subs:{} };
     view = { name:'login' };
     render();
   }
