@@ -7,7 +7,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
 import {
   getAuth, onAuthStateChanged, signOut,
-  createUserWithEmailAndPassword, signInWithEmailAndPassword,
+  createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail,
   GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 import {
@@ -49,7 +49,8 @@ const ERROR_MESSAGES = {
     'Ya existe una cuenta con este correo usando otro método de inicio de sesión (prueba con tu contraseña).',
   'auth/popup-closed-by-user': 'Cerraste la ventana de Google antes de terminar. Intenta de nuevo.',
   'auth/popup-blocked': 'El navegador bloqueó la ventana emergente de Google. Habilita popups para este sitio e intenta de nuevo.',
-  'auth/cancelled-popup-request': 'Intenta de nuevo — se abrió más de una ventana de Google a la vez.'
+  'auth/cancelled-popup-request': 'Intenta de nuevo — se abrió más de una ventana de Google a la vez.',
+  'auth/missing-initial-state': 'No se pudo completar el inicio de sesión con Google en esta app anclada. Intenta de nuevo o usa correo y contraseña.'
 };
 function authErrorMessage(e){ return ERROR_MESSAGES[e && e.code] || 'Algo salió mal. Intenta de nuevo.'; }
 
@@ -71,6 +72,10 @@ export async function signInWithEmailPass(email, password){
   try{ await signInWithEmailAndPassword(auth, email, password); return null; }
   catch(e){ return authErrorMessage(e); }
 }
+export async function resetPassword(email){
+  try{ await sendPasswordResetEmail(auth, email); return null; }
+  catch(e){ return authErrorMessage(e); }
+}
 // Popup en navegador normal: evita el error "missing initial state" que
 // signInWithRedirect dispara en Chrome cuando el almacenamiento entre
 // sitios está particionado (sessionStorage no sobrevive el viaje de ida
@@ -82,7 +87,10 @@ function isStandalonePWA(){
     || window.navigator.standalone === true;
 }
 export async function signInWithGoogle(){
-  if(isStandalonePWA()) return signInWithRedirect(auth, googleProvider);
+  if(isStandalonePWA()){
+    try{ await signInWithRedirect(auth, googleProvider); return null; }
+    catch(e){ return authErrorMessage(e); }
+  }
   try{ await signInWithPopup(auth, googleProvider); return null; }
   catch(e){ return authErrorMessage(e); }
 }

@@ -95,7 +95,7 @@
   .arcwrap{width:100%; max-width:112px; margin:0 auto;}
   .nav{position:fixed; bottom:0; left:0; right:0; background:var(--card); border-top:1px solid var(--line);
     display:flex; justify-content:center; z-index:40;}
-  .navin{width:100%; max-width:430px; display:grid; grid-template-columns:1fr 1fr;}
+  .navin{width:100%; max-width:430px; display:grid; grid-template-columns:1fr 1fr 1fr;}
   .nav button{background:none; border-radius:0; padding:10px 0 12px; text-align:center; color:var(--muted); font-size:11px;}
   .nav button.on{color:var(--blue); font-weight:600;}
   .nav .ic{font-size:19px; display:block; margin-bottom:2px;}
@@ -130,12 +130,13 @@
 <nav class="nav" id="nav" style="display:none;"><div class="navin">
   <button id="nv-hoy"><span class="ic">☀️</span>Hoy</button>
   <button id="nv-aj"><span class="ic">⚙️</span>Ajustes</button>
+  <button id="nv-so"><span class="ic">🚪</span>Salir</button>
 </div></nav>
 <div class="toast" id="toast"></div>
 
 <script type="module">
 import {
-  watchAuth, processRedirectResult, signUpWithEmail, signInWithEmailPass,
+  watchAuth, processRedirectResult, signUpWithEmail, signInWithEmailPass, resetPassword,
   signInWithGoogle, signOutUser, cloud, maybeMigrateFromLocalStorage
 } from './firebase-init.js';
 
@@ -366,6 +367,7 @@ function render(){
 }
 document.getElementById('nv-hoy').onclick=()=>{view={name:'hoy'};render();};
 document.getElementById('nv-aj').onclick=()=>{view={name:'ajustes'};render();};
+document.getElementById('nv-so').onclick=async()=>{ await signOutUser(); };
 fab.onclick = openSustituir;
 
 function arcSVG(score,color){
@@ -412,6 +414,7 @@ function renderLogin(){
     '<input type="password" id="pw" placeholder="Mínimo 6 caracteres" autocomplete="'+(mode==='signup'?'new-password':'current-password')+'">'+
     '<button class="btn primary" id="go">'+(mode==='signup'?'Crear cuenta':'Entrar')+'</button>'+
     '<button class="btn" id="google" style="text-align:center;">Continuar con Google</button>'+
+    (mode==='signup'?'':'<button class="btn ghost" id="forgot">¿Olvidaste tu contraseña?</button>')+
     '<button class="btn ghost" id="toggle">'+(mode==='signup'?'Ya tengo cuenta':'Crear una cuenta nueva')+'</button>'+
     '</div>');
   app.appendChild(c);
@@ -428,13 +431,21 @@ function renderLogin(){
     const e2 = await signInWithGoogle();
     if(e2){ pendingAuthError=e2; render(); }
   };
+  const forgot=c.querySelector('#forgot');
+  if(forgot) forgot.onclick=async()=>{
+    const email=c.querySelector('#em').value.trim();
+    if(!email){ toast('Escribe tu correo primero, arriba.'); return; }
+    const e2 = await resetPassword(email);
+    if(e2){ pendingAuthError=e2; render(); }
+    else toast('Te enviamos un correo para restablecer tu contraseña.');
+  };
   c.querySelector('#toggle').onclick=()=>{ view={name:'login', mode: mode==='signup'?'login':'signup'}; render(); };
 }
 
 /* ===== BIENVENIDA (solo primer inicio de una cuenta nueva) ===== */
 function renderOnboarding(){
   const step = view.step || 1;
-  app.appendChild(el(ritualStepsHTML(step,3)));
+  if(step<=3) app.appendChild(el(ritualStepsHTML(step,3)));
 
   if(step===1){
     app.appendChild(el('<div style="margin-top:4px; margin-bottom:4px; text-align:center;"><h1>Bienvenido a Fénix</h1></div>'));
@@ -471,17 +482,22 @@ function renderOnboarding(){
       view.step=3; render();
     };
     c.querySelector('#skip').onclick=()=>{view.step=3;render();};
-  } else {
+  } else if(step===3){
     view.chosen = view.chosen || [];
+    const pg=principal();
+    const heading = pg ? 'El camino hacia: "'+esc(pg.name)+'"' : '¿Qué harás cada día?';
+    const tag = pg ? '<div class="sub" style="margin-top:4px;">Sugeridas porque tu meta es de <b>'+esc(AREAS[pg.area].nom)+'</b>. Elige de 1 a 3 para empezar (recomendado 3, máximo 5). El método pide profundidad, no volumen — puedes ajustar esto después en Ajustes.</div>'
+      : '<div class="sub" style="margin-top:4px;">Elige 1 a 3 para empezar (recomendado 3, máximo 5). El método pide profundidad, no volumen — puedes ajustar esto después en Ajustes.</div>';
     const c=el('<div class="card"><div class="secthead">Paso 2 de 2 · Tus acciones diarias</div>'+
-      '<div class="q" style="margin-top:2px;">¿Qué harás cada día?</div>'+
-      '<div class="sub" style="margin-top:4px;">Elige 1 a 3 para empezar (recomendado 3, máximo 5). El método pide profundidad, no volumen — puedes ajustar esto después en Ajustes.</div>'+
+      '<div class="q" style="margin-top:2px;">'+heading+'</div>'+
+      tag+
       '<div id="list"></div>'+
-      '<button class="btn primary" id="n">Terminar</button>'+
+      '<button class="btn primary" id="n">Guardar mis acciones</button>'+
       '<button class="btn ghost" id="skip">Prefiero elegirlas después</button></div>');
     app.appendChild(c);
     const list=c.querySelector('#list');
-    SUGERIDAS.forEach(s=>{
+    const ordenadas = pg ? SUGERIDAS.slice().sort((a,b)=>(b.area===pg.area)-(a.area===pg.area)) : SUGERIDAS;
+    ordenadas.forEach(s=>{
       const A=AREAS[s.area], on=view.chosen.includes(s.name);
       const b=document.createElement('button');
       b.className='act'+(on?' on':'');
@@ -499,15 +515,22 @@ function renderOnboarding(){
     c.querySelector('#n').onclick=async()=>{
       if(!view.chosen.length){ toast('Elige al menos una, o toca "Prefiero elegirlas después".'); return; }
       state.actions=state.actions||[];
-      const pg=principal();
       SUGERIDAS.filter(s=>view.chosen.includes(s.name)).forEach((s,i)=>{
         state.actions.push({id:'a'+Date.now()+i, name:s.name, area:s.area, goalId:(pg&&pg.area===s.area)?pg.id:null});
       });
       await save();
-      view={name:'hoy'}; render();
-      toast('¡Todo listo! Así arranca tu primer día.');
+      view={name:'onboarding', step:4}; render();
     };
     c.querySelector('#skip').onclick=()=>{ view={name:'hoy'}; render(); };
+  } else {
+    const c=el('<div class="card">'+
+      '<div class="voice" style="font-style:normal; font-weight:600; font-size:16px; padding-top:0;">¡Todo listo!</div>'+
+      '<div class="sub" style="margin-top:10px; line-height:1.6;">Tu meta, tus acciones y tu primer paso ya están conectados. Así arranca — un día a la vez, sin quemarte.</div>'+
+      '<button class="btn primary" id="am">Vivir mi ritual de mañana ahora →</button>'+
+      '<button class="btn ghost" id="hoy">Ir a Hoy</button></div>');
+    app.appendChild(c);
+    c.querySelector('#am').onclick=()=>{ view={name:'am', step:1}; render(); };
+    c.querySelector('#hoy').onclick=()=>{ view={name:'hoy'}; render(); toast('¡Todo listo! Así arranca tu primer día.'); };
   }
 }
 
