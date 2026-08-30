@@ -519,7 +519,8 @@ function renderOnboarding(){
         state.actions.push({id:'a'+Date.now()+i, name:s.name, area:s.area, goalId:(pg&&pg.area===s.area)?pg.id:null});
       });
       await save();
-      view={name:'onboarding', step:4}; render();
+      if(view.returning){ view={name:'hoy'}; render(); toast('¡Acciones guardadas! Así arranca tu día.'); }
+      else { view={name:'onboarding', step:4}; render(); }
     };
     c.querySelector('#skip').onclick=()=>{ view={name:'hoy'}; render(); };
   } else {
@@ -541,12 +542,21 @@ function renderHoy(){
 
   app.appendChild(el('<div style="margin-bottom:14px;"><h1>Hoy</h1><div class="sub">Tu potencial, sin quemarte.</div></div>'));
 
+  if(!(state.goals||[]).length){
+    const c=el('<div class="card"><div class="q">Define tu primera meta</div>'+
+      '<div class="sub" style="margin-top:6px;">Todo en Fénix nace de una meta: tus acciones diarias, tu roca de cada mañana y tu ritual nocturno cuelgan de ella. Empecemos por ahí — toma menos de un minuto.</div>'+
+      '<button class="btn primary" id="go">Crear mi meta</button></div>');
+    app.appendChild(c);
+    c.querySelector('#go').onclick=()=>{view={name:'onboarding', step:2, returning:true};render();};
+    return;
+  }
+
   if(!state.actions.length){
-    const c=el('<div class="card"><div class="q">Define tus acciones diarias</div>'+
-      '<div class="sub" style="margin-top:6px;">Cada acción vive en una de tus 6 áreas y puede servir a una meta. Empieza con 3.</div>'+
+    const c=el('<div class="card"><div class="q">Elige tus acciones diarias</div>'+
+      '<div class="sub" style="margin-top:6px;">Cada acción vive en una de tus 6 áreas'+(pg?' y puede servir a tu meta "'+esc(pg.name)+'"':' y puede servir a una meta')+'. Empieza con 3.</div>'+
       '<button class="btn primary" id="go">Elegir mis acciones</button></div>');
     app.appendChild(c);
-    c.querySelector('#go').onclick=()=>{view={name:'acts'};render();};
+    c.querySelector('#go').onclick=()=>{view={name:'onboarding', step:3, chosen:[], returning:true};render();};
     return;
   }
 
