@@ -1186,7 +1186,10 @@ async function onAuthChange(user){
     try{
       await load();
     }catch(e){
-      pendingDataError = 'No se pudo conectar con tus datos: ' + ((e && e.message) || e);
+      // Detalle ampliado (origen del fallo, código, uid/correo) para poder
+      // diagnosticar sin depender de la consola del navegador.
+      pendingDataError = 'No se pudo conectar con tus datos ['+(e&&e.source||'?')+'/'+(e&&e.code||'?')+']: ' +
+        ((e && e.message) || e) + ' — cuenta: ' + (currentUser.email||currentUser.uid);
       view = { name:'login' };
       render();
     }

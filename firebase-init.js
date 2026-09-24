@@ -136,7 +136,7 @@ export const cloud = {
         if(profileFirst){ profileFirst = false; resolveProfile(); }
         else if(!snap.metadata.hasPendingWrites && this._onRemoteChange) this._onRemoteChange();
       },
-      err => { if(profileFirst){ profileFirst = false; rejectProfile(err); } }
+      err => { if(profileFirst){ profileFirst = false; err.source = 'perfil'; rejectProfile(err); } }
     );
     this._unsubLogs = onSnapshot(logsRef,
       snap => {
@@ -147,7 +147,7 @@ export const cloud = {
         if(logsFirst){ logsFirst = false; resolveLogs(); }
         else if(!snap.metadata.hasPendingWrites && this._onRemoteChange) this._onRemoteChange();
       },
-      err => { if(logsFirst){ logsFirst = false; rejectLogs(err); } }
+      err => { if(logsFirst){ logsFirst = false; err.source = 'logs'; rejectLogs(err); } }
     );
     await Promise.all([profileReady, logsReady]);
   },
