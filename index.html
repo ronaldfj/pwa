@@ -261,14 +261,22 @@ function onRemoteChange(){
 }
 async function save(){
   if (!currentUser) return;
-  await cloud.saveProfile({
-    theme: state.theme, goals: state.goals, actions: state.actions,
-    affirmations: state.affirmations, logros: state.logros, subs: state.subs
-  });
-  const hoy = todayStr();
-  // Invariante: toda mutación de logs en esta app toca solo el día de hoy
-  // (ritual AM/PM, recuperación) — ver nota en cloud.saveCurrentMonthBucket.
-  if (state.logs[hoy] !== undefined) await cloud.saveCurrentMonthBucket(hoy, state.logs[hoy]);
+  // Único punto de escritura de la app hacia Firestore (perfil + log de
+  // hoy): si la escritura falla (permisos, cuota, sin red y sin caché
+  // local todavía), se avisa en vez de dejar la UI en un estado "guardado"
+  // que en realidad no llegó a la nube.
+  try{
+    await cloud.saveProfile({
+      theme: state.theme, goals: state.goals, actions: state.actions,
+      affirmations: state.affirmations, logros: state.logros, subs: state.subs
+    });
+    const hoy = todayStr();
+    // Invariante: toda mutación de logs en esta app toca solo el día de hoy
+    // (ritual AM/PM, recuperación) — ver nota en cloud.saveCurrentMonthBucket.
+    if (state.logs[hoy] !== undefined) await cloud.saveCurrentMonthBucket(hoy, state.logs[hoy]);
+  }catch(e){
+    toast('No se pudo guardar en la nube. Revisa tu conexión e intenta de nuevo.');
+  }
 }
 function toast(t){ const el=document.getElementById('toast');
   el.textContent=t; el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),2300); }
@@ -710,12 +718,23 @@ function renderAjustes(){
   const rst=el('<button class="btn ghost" style="margin-top:20px;">Borrar todos mis datos</button>');
   app.appendChild(rst);
   rst.firstChild.onclick=async()=>{
-    if(confirm('¿Borrar todos tus datos (metas, acciones, registros y logros)? No se puede deshacer.')){
+    if(!confirm('¿Borrar todos tus datos (metas, acciones, registros y logros)? No se puede deshacer.')) return;
+    // Los onSnapshot de cloud.attach() siguen activos durante el borrado:
+    // se silencia onRemoteChange para no pintar un render a medio borrar
+    // (colección de logs vacía, perfil todavía sin recrear) antes de que
+    // termine esta operación.
+    const cb = cloud._onRemoteChange; cloud._onRemoteChange = null;
+    try{
       await cloud.deleteAllUserData(currentUser.uid);
       cloud.profile = null; cloud.logBuckets = {};
       state={theme:'light',actions:[],logs:{},affirmations:AFIRM_BASE.slice(),logros:[],goals:[],subs:{}};
-      await save(); view={name:'hoy'}; render();
+      await save();
+    }catch(e){
+      toast('No se pudieron borrar los datos. Intenta de nuevo.');
+    }finally{
+      cloud._onRemoteChange = cb;
     }
+    view={name:'hoy'}; render();
   };
 }
 
@@ -821,7 +840,9 @@ function renderPM(){
     });
     c.querySelector('#n').onclick=()=>{view.step=2;render();};
     c.querySelector('#rec').onclick=async()=>{
-      state.logs[hoy]={rec:true};
+      const cur=state.logs[hoy];
+      if(cur&&cur.pm&&!confirm('Ya registraste tu noche hoy. ¿Reemplazarla por un día de recuperación? Se perderá lo registrado (gratitud, gobernadores).')) return;
+      state.logs[hoy]=(cur&&cur.am)?{am:cur.am,rec:true}:{rec:true};
       await save(); view={name:'hoy'}; render();
       toast('Recuperación registrada. La racha se congela, no se rompe.');
     };
@@ -852,6 +873,7 @@ function renderPM(){
     scaleInto(c.querySelector('#sc'),async v=>{
       const total=state.actions.length||1;
       state.logs[hoy]=state.logs[hoy]||{};
+      delete state.logs[hoy].rec; // rec y pm son excluyentes: un ritual completo ya no es día de recuperación
       state.logs[hoy].pm={done:view.done.slice(),pct:view.done.length/total,grat:view.grat||[],paz:view.paz,ener:v};
       await save(); view={name:'hoy'}; render();
       toast('Día cerrado en positivo. Buenas noches.');
@@ -1128,6 +1150,21 @@ function renderReview(){
     });
     const habitos=state.actions.filter(a=>!a.goalId);
     if(habitos.length) avl.appendChild(el('<div class="sub" style="margin-top:10px; font-size:11.5px;">Además sostienes '+habitos.length+' '+(habitos.length===1?'hábito':'hábitos')+' de vida — esos no avanzan hacia nada: son la vida misma.</div>'));
+  }
+
+  const gratWeek=[];
+  for(let i=0;i<7;i++){
+    const day=addDays(hoy,-i), L=state.logs[day];
+    if(L&&L.pm&&L.pm.grat&&L.pm.grat.length) gratWeek.push({day,items:L.pm.grat});
+  }
+  if(gratWeek.length){
+    const gr=el('<div class="card"><div class="secthead">Gratitud de la semana</div><div id="gr"></div></div>');
+    app.appendChild(gr);
+    const grl=gr.querySelector('#gr');
+    gratWeek.forEach(({day,items})=>{
+      grl.appendChild(el('<div style="margin-top:9px; font-size:13px;"><div style="color:var(--muted); font-size:11.5px; margin-bottom:2px;">'+esc(day)+'</div>'+
+        items.map(g=>'<div style="line-height:1.5;">· '+esc(g)+'</div>').join('')+'</div>'));
+    });
   }
 
   const R=REFLEX[weekIdx()];

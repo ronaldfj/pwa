@@ -35,6 +35,10 @@ const db = initializeFirestore(app, {
 });
 export const auth = getAuth(app);
 const googleProvider = new GoogleAuthProvider();
+// Sin esto, Google reutiliza en silencio la última sesión activa del
+// navegador/dispositivo: tras cerrar sesión en la app, un nuevo intento de
+// "Entrar con Google" volvía a loguear la misma cuenta sin dejar elegir otra.
+googleProvider.setCustomParameters({ prompt: 'select_account' });
 
 /* ===== Auth ===== */
 const ERROR_MESSAGES = {
@@ -173,7 +177,12 @@ export const cloud = {
   async saveCurrentMonthBucket(dayKey, entry){
     if(!this.uid) return;
     const month = dayKey.slice(0, 7);
-    await setDoc(doc(db, 'users', this.uid, 'logs', month), { [dayKey]: entry }, { merge: true });
+    // mergeFields (no merge:true) reemplaza el mapa del día entero en vez de
+    // fusionarlo campo a campo: si el motor quita `pm` o `rec` del objeto
+    // local (p. ej. al pasar de recuperación a ritual completo), esa
+    // eliminación debe reflejarse en Firestore y no dejar el campo viejo
+    // "fantasma" mezclado con el nuevo.
+    await setDoc(doc(db, 'users', this.uid, 'logs', month), { [dayKey]: entry }, { mergeFields: [dayKey] });
   },
 
   async deleteAllUserData(uid){
