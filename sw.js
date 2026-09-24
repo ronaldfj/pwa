@@ -1,9 +1,13 @@
-const CACHE='fenix-v6-27';
+const CACHE='fenix-v6-28';
 const SHELL=['./','./index.html','./firebase-init.js','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
 self.addEventListener('install',e=>{ e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL))); self.skipWaiting(); });
 self.addEventListener('activate',e=>{ e.waitUntil(caches.keys().then(ks=>Promise.all(
   ks.filter(k=>k!==CACHE).map(k=>caches.delete(k))))); self.clients.claim(); });
 self.addEventListener('fetch',e=>{
+  // La Cache API solo admite peticiones GET (cache.put lanza en cualquier
+  // otro método). Auth/Firestore hacen POST para sus canales de datos —
+  // dejarlos pasar sin interceptar, en vez de intentar cachearlos.
+  if(e.request.method!=='GET') return;
   if(e.request.mode==='navigate'||e.request.destination==='document'||e.request.url.endsWith('index.html')||e.request.url.endsWith('/')){
     e.respondWith(
       fetch(e.request).then(res=>{

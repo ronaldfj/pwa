@@ -1187,7 +1187,9 @@ async function onAuthChange(user){
       await load();
     }catch(e){
       // Detalle ampliado (origen del fallo, código, uid/correo) para poder
-      // diagnosticar sin depender de la consola del navegador.
+      // diagnosticar sin depender de la consola del navegador; se imprime
+      // también con console.error por si la consola sí está disponible.
+      console.error('cloud.attach falló', e);
       pendingDataError = 'No se pudo conectar con tus datos ['+(e&&e.source||'?')+'/'+(e&&e.code||'?')+']: ' +
         ((e && e.message) || e) + ' — cuenta: ' + (currentUser.email||currentUser.uid);
       view = { name:'login' };
