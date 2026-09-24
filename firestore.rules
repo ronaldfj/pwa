@@ -5,7 +5,17 @@ service cloud.firestore {
       allow read, write: if request.auth != null && request.auth.uid == uid;
 
       match /logs/{monthKey} {
-        allow read, write: if request.auth != null && request.auth.uid == uid
+        // read separado de write: Firestore evalúa un "list" (onSnapshot
+        // sin filtro sobre toda la colección, como hace cloud.attach())
+        // contra el conjunto potencial de resultados. Como monthKey varía
+        // por documento, exigirle el regex también en el read hacía que
+        // CUALQUIER listado de la colección se rechazara por completo,
+        // aunque todo documento real escrito por la app sí cumple el
+        // formato (permission-denied incluso para el dueño legítimo).
+        // uid, en cambio, es fijo para toda la colección: sí se puede
+        // validar en un list sin problema.
+        allow read: if request.auth != null && request.auth.uid == uid;
+        allow write: if request.auth != null && request.auth.uid == uid
           && monthKey.matches('^[0-9]{4}-(0[1-9]|1[0-2])$');
       }
     }
