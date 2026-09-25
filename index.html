@@ -6,6 +6,7 @@
 <title>Fénix</title>
 <meta name="theme-color" content="#1F66C1">
 <link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" href="./fenix-icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="./icon-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -1322,12 +1323,12 @@ async function onAuthChange(user){
     try{
       await load();
     }catch(e){
-      // Detalle ampliado (origen del fallo, código, uid/correo) para poder
-      // diagnosticar sin depender de la consola del navegador; se imprime
-      // también con console.error por si la consola sí está disponible.
-      console.error('cloud.attach falló', e);
-      pendingDataError = 'No se pudo conectar con tus datos ['+(e&&e.source||'?')+'/'+(e&&e.code||'?')+']: ' +
-        ((e && e.message) || e) + ' — cuenta: ' + (currentUser.email||currentUser.uid);
+      // En pantalla solo un mensaje claro y el código (útil para soporte);
+      // el detalle técnico completo (origen, mensaje crudo) va a la consola,
+      // no a la UI, para no mostrar datos internos de la cuenta ni de Firestore.
+      console.error('cloud.attach falló', e && e.source, e);
+      pendingDataError = 'No pudimos conectar con tus datos. Revisa tu conexión e intenta de nuevo.' +
+        (e && e.code ? ' (código: '+e.code+')' : '');
       view = { name:'login' };
       render();
     }
