@@ -63,7 +63,11 @@ Réplica en Dart puro: paquete `fenix_logic` (mismo algoritmo, 12 tests).
 
 - Ventana: 7 días calendario. Solo noches con `pm` cuentan.
 - `cump` = promedio de `pct` diario × 100, redondeado. `pct` = acciones
-  cumplidas / total acciones (parcial no existe: es fracción).
+  cumplidas / acciones que tocaban ese día (`actsOn`, según `days`).
+  Una acción semanal no cuenta como incumplida los días que no le tocan.
+  Noche con `pct: null` (no tocaba nada): cuenta para gobernadores, no para
+  `cump`; si en toda la ventana `cump` es null, se trata como alto.
+  (Pendiente replicar en `fenix_logic`.)
 - Cumplimiento alto: `cump >= 70`.
 - Riesgo: `paz7d < 5` OR `ener7d < 5` OR `tendencia ≤ −2`
   (tendencia solo si la semana previa tiene ≥5 registros; si no, null).
@@ -82,8 +86,9 @@ Réplica en Dart puro: paquete `fenix_logic` (mismo algoritmo, 12 tests).
 users/{uid}                    // doc de perfil — se reescribe entero en cada save() (barato)
   {
     theme: 'light'|'dark',
-    goals:   [{ id, name, area, why, hor /*años: 1,2,3,5,10,15,20*/, principal }],
-    actions: [{ id, name, area, goalId /*null = hábito de vida*/ }],
+    goals:   [{ id, name, area, why, hor /*años: 1–10*/, principal }],
+    actions: [{ id, name, area, goalId /*null = hábito de vida*/,
+                days? /*[getDay()], 0=dom; ausente = diaria*/ }],
     affirmations: [strings],     // rotan por día del mes
     logros: [strings],           // lista de victorias (meta: 100)
     subs: { 'yyyy-MM-dd': n }    // usos del botón Sustituir por día
@@ -93,7 +98,8 @@ users/{uid}/logs/{yyyy-MM}     // un doc por mes, mapa de días adentro
   { 'yyyy-MM-dd': {
       rec?: true,                      // día de recuperación (excluyente)
       am?:  { roca: actionId },        // ritual matutino
-      pm?:  { done:[ids], pct, grat:[3 strings], paz:1-10, ener:1-10 }
+      pm?:  { done:[ids], pct /*null si ese día no tocaba ninguna acción*/,
+              grat:[3 strings], paz:1-10, ener:1-10 }
   }, ... }
 ```
 El cliente (`firebase-init.js`, objeto `cloud`) arma `state.logs` haciendo

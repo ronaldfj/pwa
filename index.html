@@ -121,6 +121,12 @@
   .rline{width:24px; height:2px; background:var(--line);}
   .rline.done{background:var(--calm);}
 
+  /* Selector de días de una acción */
+  .days{display:grid; grid-template-columns:repeat(7,1fr); gap:6px; margin-top:6px;}
+  .days button{padding:9px 0; background:var(--card2); border:1px solid var(--line); font-size:13px;}
+  .days button.on{background:var(--bluebg); border-color:var(--blue); color:var(--blue); font-weight:600;}
+  .edit{background:none; color:var(--muted); font-size:15px; padding:0 3px; flex-shrink:0;}
+
   @media (prefers-reduced-motion: reduce){ *{transition:none !important;} }
 </style>
 </head>
@@ -166,11 +172,13 @@ const METAS_SEMILLA = [
   {name:'Pasar más tiempo con mi mamá', area:'familiar', why:'', hor:1},
   {name:'Paseo mensual con toda la familia', area:'familiar', why:'Mantener a la familia unida y relajada', hor:1}
 ];
+const HOR_MAX = 10; // las metas van de 1 a 10 años
+const HOR_OPCIONES = Array.from({length:HOR_MAX},(_,i)=>i+1);
 const HORIZONTES = [
   {max:1, id:'h1', nom:'Este año', sub:'Se trabajan ahora: de aquí sale tu meta principal ⭐'},
   {max:3, id:'h3', nom:'2–3 años', sub:'En preparación: aún no piden tu día a día'},
-  {max:5, id:'h5', nom:'~5 años', sub:'Mediano plazo'},
-  {max:99, id:'h10', nom:'10+ años · Visión', sub:'Tu dirección de vida: se visitan, no se cargan'}
+  {max:5, id:'h5', nom:'4–5 años', sub:'Mediano plazo'},
+  {max:10, id:'h10', nom:'6–10 años · Visión', sub:'Tu dirección de vida: se visitan, no se cargan'}
 ];
 function horBucket(h){ for(const b of HORIZONTES){ if((h||1)<=b.max) return b; } return HORIZONTES[3]; }
 const AFIRM_BASE = [
@@ -242,6 +250,8 @@ async function load(){
   }
   let mig=false;
   (state.goals||[]).forEach(g=>{ if(g.hor==null){ const s=METAS_SEMILLA.find(m=>m.name===g.name); g.hor=s?s.hor:1; mig=true; } });
+  // Metas creadas cuando se permitían 15 y 20 años: se ajustan al tope actual.
+  (state.goals||[]).forEach(g=>{ if(g.hor>HOR_MAX){ g.hor=HOR_MAX; mig=true; } });
   (state.actions||[]).forEach(a=>{ if(a.goalId===undefined){
     const s=SUGERIDAS.find(x=>x.name===a.name);
     const g=s&&s.goal?goalByName(s.goal):null;
@@ -282,6 +292,26 @@ function toast(t){ const el=document.getElementById('toast');
   el.textContent=t; el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),2300); }
 function principal(){ return (state.goals||[]).find(g=>g.principal) || null; }
 
+/* ===== FRECUENCIA DE ACCIONES ===== */
+// action.days: días de la semana en que toca la acción, con la numeración de
+// Date.getDay() (0=domingo). Si falta, la acción es diaria — así las acciones
+// creadas antes de existir este campo siguen funcionando sin migración.
+// Se guarda ausente (no [0..6]) cuando son los 7 días, para tener una sola
+// forma canónica de "diaria".
+const DIAS_LETRA = ['D','L','M','X','J','V','S'];
+const DIAS_NOM = ['dom','lun','mar','mié','jue','vie','sáb'];
+const ORDEN_SEMANA = [1,2,3,4,5,6,0]; // la semana se muestra de lunes a domingo
+function weekdayOf(s){ const p=s.split('-').map(Number); return new Date(p[0],p[1]-1,p[2]).getDay(); }
+function isScheduled(a,s){ return !a.days || a.days.includes(weekdayOf(s)); }
+// Acciones que tocan en el día s (yyyy-MM-dd). Todo lo que mide cumplimiento
+// usa esto como denominador: una acción semanal no "falla" los días que no le tocan.
+function actsOn(s){ return state.actions.filter(a=>isScheduled(a,s)); }
+function freqTxt(a){
+  if(!a.days) return 'diaria';
+  const nombres=ORDEN_SEMANA.filter(d=>a.days.includes(d)).map(d=>DIAS_NOM[d]).join(', ');
+  return (a.days.length===1?'semanal':a.days.length+'× semana')+' · '+nombres;
+}
+
 /* ===== MOTOR ===== */
 // Umbrales del método (regla no negociable #1 en CLAUDE.md): única fuente de verdad,
 // usados por diagnose(), govColor() y el tono de "Tus gobernadores" en renderHoy().
@@ -317,12 +347,16 @@ function record(upTo){
 // Promedios de una ventana de 7 días calendario terminando en (endDate - off).
 // Solo cuentan las noches con pm registrado: un día sin registro no entra al promedio,
 // solo corta la racha (regla #3) — nunca se castiga un promedio por días faltantes.
+// Una noche con pct null (ese día no tocaba ninguna acción) sí cuenta para los
+// gobernadores, pero no para el cumplimiento: no había nada que cumplir, y
+// promediarla como 0% o 100% falsearía el dato (mismo espíritu que la regla #3).
 function winStats(endDate,off){
-  let n=0,cum=0,paz=0,ener=0;
+  let n=0,nc=0,cum=0,paz=0,ener=0;
   for(let i=0;i<7;i++){ const L=state.logs[addDays(endDate,-off-i)];
-    if(L&&L.pm){ n++; cum+=L.pm.pct; paz+=L.pm.paz; ener+=L.pm.ener; } }
+    if(L&&L.pm){ n++; paz+=L.pm.paz; ener+=L.pm.ener;
+      if(typeof L.pm.pct==='number'){ nc++; cum+=L.pm.pct; } } }
   if(!n) return {n:0};
-  return {n,cump:Math.round(cum/n*100),paz:Math.round(paz/n*10)/10,ener:Math.round(ener/n*10)/10};
+  return {n,cump:nc?Math.round(cum/nc*100):null,paz:Math.round(paz/n*10)/10,ener:Math.round(ener/n*10)/10};
 }
 // tP/tE (tendencia) quedan en null si la semana previa no tiene al menos
 // MIN_NOCHES_CALIBRACION registros — comparar contra una base con muy pocos datos
@@ -335,7 +369,9 @@ function diagnose(endDate){
   if(p.n>=MIN_NOCHES_CALIBRACION){ tP=Math.round((w.paz-p.paz)*10)/10; tE=Math.round((w.ener-p.ener)*10)/10; }
   const riesgo = w.paz<UMBRAL_GOV_RIESGO||w.ener<UMBRAL_GOV_RIESGO
     ||(tP!==null&&tP<=UMBRAL_TENDENCIA_RIESGO)||(tE!==null&&tE<=UMBRAL_TENDENCIA_RIESGO);
-  const alto = w.cump>=UMBRAL_CUMPLIMIENTO_ALTO;
+  // cump null = en toda la semana no tocaba ninguna acción: no hubo nada que
+  // incumplir, así que no se lee como cumplimiento bajo.
+  const alto = w.cump===null || w.cump>=UMBRAL_CUMPLIMIENTO_ALTO;
   return {estado: alto?(riesgo?'quemandose':'enmarcha'):(riesgo?'apagado':'aladeriva'), w,tP,tE};
 }
 const META_E={
@@ -572,7 +608,7 @@ function renderHoy(){
   app.appendChild(el('<div class="kpis">'+
     '<div class="kpi"><div class="kval"><span style="color:var(--blue);">🔥</span> '+s+'</div><div class="klab">racha</div></div>'+
     '<div class="kpi"><div class="kval">'+rec+'</div><div class="klab">récord</div></div>'+
-    '<div class="kpi"><div class="kval">'+(w.n?w.cump+'%':'—')+'</div><div class="klab">cumplim. 7d</div></div></div>'));
+    '<div class="kpi"><div class="kval">'+(w.n&&w.cump!==null?w.cump+'%':'—')+'</div><div class="klab">cumplim. 7d</div></div></div>'));
 
   /* 2. Gobernadores (Paz mental & Energía) */
   const gp=w.n?w.paz:null, ge=w.n?w.ener:null;
@@ -606,14 +642,12 @@ function renderHoy(){
 
   /* 4. Meta Principal ⭐ */
   if(pg){
-    const actsPg=state.actions.filter(a=>a.goalId===pg.id).map(a=>a.id);
+    const actsPg=state.actions.filter(a=>a.goalId===pg.id);
     let pgDone=0, pgTotal=0;
-    if(actsPg.length){
-      for(let i=0;i<7;i++){
-        const Ld=state.logs[addDays(hoy,-i)];
-        if(Ld&&Ld.pm){ actsPg.forEach(aid=>{ pgTotal++;
-          if(Ld.pm.done&&Ld.pm.done.includes(aid)) pgDone++; }); }
-      }
+    for(let i=0;i<7;i++){
+      const d=addDays(hoy,-i), Ld=state.logs[d];
+      if(Ld&&Ld.pm){ actsPg.forEach(a=>{ if(!isScheduled(a,d)) return; pgTotal++;
+        if(Ld.pm.done&&Ld.pm.done.includes(a.id)) pgDone++; }); }
     }
     const pgPct=pgTotal?Math.round(pgDone/pgTotal*100):0;
     const mp=el('<button class="card" style="width:100%; text-align:left; display:block;">'+
@@ -649,13 +683,16 @@ function renderHoy(){
   app.appendChild(acc);
   const al=acc.querySelector('#al');
   const doneHoy=(L.pm&&L.pm.done)||[];
-  state.actions.forEach(a=>{
+  const tocanHoy=actsOn(hoy), otras=state.actions.length-tocanHoy.length;
+  if(!tocanHoy.length) al.appendChild(el('<div class="sub" style="margin:0;">Hoy no te toca ninguna acción. Día libre de acciones: tus rituales siguen contando.</div>'));
+  tocanHoy.forEach(a=>{
     const A=AREAS[a.area], done=doneHoy.includes(a.id);
     al.appendChild(el('<div style="display:flex; align-items:center; gap:9px; padding:7px 0; font-size:13.5px;">'+
       '<span style="color:'+(done?'var(--calm)':'var(--muted)')+'; font-weight:600;">'+(done?'✓':'○')+'</span>'+
-      '<span style="flex:1;">'+esc(a.name)+'</span>'+
+      '<span style="flex:1;">'+esc(a.name)+(a.days?'<div class="sub" style="margin:0; font-size:11px;">'+freqTxt(a)+'</div>':'')+'</span>'+
       '<span class="atag" style="background:'+A.color+'1c; color:'+A.color+';">'+A.nom+'</span></div>'));
   });
+  if(otras>0) al.appendChild(el('<div class="sub" style="margin-top:6px; font-size:11.5px;">'+otras+' '+(otras===1?'acción no toca':'acciones no tocan')+' hoy.</div>'));
 
   /* 7. Constancia (Heatmap 4 semanas) */
   const hm=el('<div class="card"><div class="secthead">Constancia · últimas 4 semanas</div><div class="heat" id="hm"></div>'+
@@ -669,6 +706,7 @@ function renderHoy(){
     const cell=document.createElement('div');
     if(!Ld) cell.style.background='var(--heat-empty)';
     else if(Ld.rec) cell.style.background='var(--recov)';
+    else if(Ld.pm&&typeof Ld.pm.pct!=='number') cell.style.background='var(--blue)'; // no tocaba nada: noche cerrada
     else if(Ld.pm) cell.style.background=Ld.pm.pct>=0.8?'var(--blue)':(Ld.pm.pct>0?'var(--heat-partial)':'var(--heat-bad)');
     else if(Ld.am) cell.style.background='var(--heat-partial)';
     else cell.style.background='var(--heat-empty)';
@@ -699,7 +737,7 @@ function renderAjustes(){
 
   const items=[
     {t:'⭐ Mis metas', s:(state.goals||[]).length+' metas · por horizonte', v:'metas'},
-    {t:'Mis acciones diarias', s:state.actions.length+' de 5 · vinculadas a metas', v:'acts'},
+    {t:'Mis acciones', s:state.actions.length+' de 5 · diarias o por días de la semana', v:'acts'},
     {t:'Mis logros', s:state.logros.length+' de 100 · evidencia contra el miedo', v:'logros'}
   ];
   items.forEach(it=>{
@@ -787,7 +825,19 @@ function renderAM(){
     app.appendChild(c);
     const list=c.querySelector('#list');
     const pg2=principal();
-    const orden=state.actions.slice().sort((x,y)=>
+    const tocan=actsOn(hoy);
+    if(!tocan.length){
+      list.appendChild(el('<div class="sub" style="margin-top:10px;">Hoy no te toca ninguna acción. Tu roca puede ser simplemente estar presente.</div>'));
+      const fin=el('<button class="btn primary">Cerrar mi mañana</button>');
+      list.appendChild(fin);
+      fin.firstChild.onclick=async()=>{
+        state.logs[hoy]=state.logs[hoy]||{};
+        state.logs[hoy].am={roca:null};
+        await save(); view={name:'hoy'}; render();
+        toast('Mañana completa.');
+      };
+    }
+    const orden=tocan.slice().sort((x,y)=>
       ((y.goalId&&pg2&&y.goalId===pg2.id)?1:0)-((x.goalId&&pg2&&x.goalId===pg2.id)?1:0));
     orden.forEach(a=>{
       const A=AREAS[a.area], g=goalById(a.goalId);
@@ -825,7 +875,9 @@ function renderPM(){
       '<button class="btn ghost" id="rec">Hoy fue día de recuperación (racha se conserva)</button></div>');
     app.appendChild(c);
     const list=c.querySelector('#list');
-    const ordered=state.actions.slice().sort((a,b)=>(b.id===roca)-(a.id===roca));
+    const tocan=actsOn(hoy);
+    if(!tocan.length) list.appendChild(el('<div class="sub" style="margin-top:8px;">Hoy no te tocaba ninguna acción. Sigue con tu gratitud y tus gobernadores.</div>'));
+    const ordered=tocan.slice().sort((a,b)=>(b.id===roca)-(a.id===roca));
     ordered.forEach(a=>{
       const A=AREAS[a.area], isR=a.id===roca;
       const b=document.createElement('button');
@@ -871,10 +923,10 @@ function renderPM(){
       '<div class="anchors">1–4 agotado · 5–6 alcanza sin sobra · 7–10 vitalidad plena</div></div>');
     app.appendChild(c);
     scaleInto(c.querySelector('#sc'),async v=>{
-      const total=state.actions.length||1;
+      const total=actsOn(hoy).length;
       state.logs[hoy]=state.logs[hoy]||{};
       delete state.logs[hoy].rec; // rec y pm son excluyentes: un ritual completo ya no es día de recuperación
-      state.logs[hoy].pm={done:view.done.slice(),pct:view.done.length/total,grat:view.grat||[],paz:view.paz,ener:v};
+      state.logs[hoy].pm={done:view.done.slice(),pct:total?view.done.length/total:null,grat:view.grat||[],paz:view.paz,ener:v};
       await save(); view={name:'hoy'}; render();
       toast('Día cerrado en positivo. Buenas noches.');
     });
@@ -911,6 +963,38 @@ function openSustituir(){
 }
 
 /* ===== METAS ===== */
+// Formulario compartido por "Agregar meta" y "Editar meta". g = meta a editar o null.
+function goalFormHTML(g){
+  const v=g||{name:'',why:'',area:'personal',hor:1};
+  return '<label for="gn">Meta (clara, como si ya tuviera fecha)</label><input type="text" id="gn" placeholder="Visitar Israel con la familia" value="'+esc(v.name)+'">'+
+    '<label for="gw" style="display:block; margin-top:8px;">Mi porqué</label><input type="text" id="gw" placeholder="¿Por qué esta meta vale tu vida?" value="'+esc(v.why||'')+'">'+
+    '<label for="ga" style="display:block; margin-top:8px;">Área</label><select id="ga">'+
+    Object.keys(AREAS).map(k=>'<option value="'+k+'"'+(k===v.area?' selected':'')+'>'+AREAS[k].nom+'</option>').join('')+
+    '</select>'+
+    '<label for="gh" style="display:block; margin-top:8px;">¿A cuánto tiempo?</label><select id="gh">'+
+    HOR_OPCIONES.map(h=>'<option value="'+h+'"'+(h===(v.hor||1)?' selected':'')+'>'+h+' '+(h===1?'año':'años')+'</option>').join('')+
+    '</select>';
+}
+function readGoalForm(node){
+  return { name:node.querySelector('#gn').value.trim(), why:node.querySelector('#gw').value.trim(),
+    area:node.querySelector('#ga').value, hor:parseInt(node.querySelector('#gh').value) };
+}
+function renderGoalEdit(gl,g){
+  const f=el('<div class="card" style="margin-top:9px; border-color:var(--blue);"><div class="secthead">Editar meta</div>'+goalFormHTML(g)+
+    '<button class="btn primary" id="ok">Guardar cambios</button><button class="btn ghost" id="cx">Cancelar</button></div>');
+  gl.appendChild(f);
+  f.querySelector('#cx').onclick=()=>{ view.edit=null; render(); };
+  f.querySelector('#ok').onclick=async()=>{
+    const d=readGoalForm(f);
+    if(!d.name){toast('Escribe la meta.');return;}
+    // Regla #6: la principal debería ser de este año; se advierte si se aleja.
+    if(g.principal && d.hor>1 && (g.hor||1)<=1 && !confirm('Esta es tu meta principal ⭐ y la estás llevando a '+d.hor+' años. La principal debería ser de este año — la visualizas cada mañana. ¿Guardar igual?')) return;
+    Object.assign(g,d);
+    view.open[horBucket(d.hor).id]=true; // que la meta siga a la vista si cambió de horizonte
+    view.edit=null; await save(); render();
+    toast('Meta actualizada.');
+  };
+}
 function renderMetas(){
   const back=el('<button class="back">← Volver</button>');
   app.appendChild(back);
@@ -939,6 +1023,7 @@ function renderMetas(){
     if(!abierto) return;
     const gl=sec.querySelector('.mlist');
     metas.forEach(g=>{
+      if(view.edit===g.id){ renderGoalEdit(gl,g); return; }
       const A=AREAS[g.area];
       const r=document.createElement('div');
       r.className='act';
@@ -950,7 +1035,8 @@ function renderMetas(){
         (g.created?' · desde '+fmtDateShort(g.created)+' ('+elapsedTxt(g.created)+')':'')+
         (g.why?' · '+esc(g.why):'')+'</div></span>'+
         '<span class="atag" style="background:'+A.color+'1c; color:'+A.color+';">'+A.nom+'</span>'+
-        '<button style="background:none; color:var(--muted); font-size:15px; padding:0 3px;" aria-label="Quitar">✕</button>';
+        '<button class="edit" aria-label="Editar">✎</button>'+
+        '<button class="edit" aria-label="Quitar">✕</button>';
       const btns=r.querySelectorAll('button');
       btns[0].onclick=async()=>{
         if(!g.principal && (g.hor||1)>1 && !confirm('Esta meta es a '+g.hor+' años. La principal debería ser de este año — la visualizarás cada mañana. ¿Marcarla igual?')) return;
@@ -958,9 +1044,13 @@ function renderMetas(){
         await save(); render();
         if(!g.principal) toast('Meta principal: '+g.name);
       };
-      btns[1].onclick=async()=>{
+      btns[1].onclick=()=>{ view.edit=g.id; render(); };
+      btns[2].onclick=async()=>{
         if(confirm('¿Quitar esta meta?')){
           state.goals=state.goals.filter(x=>x.id!==g.id);
+          // Las acciones que servían a esta meta pasan a hábito de vida en vez
+          // de quedar apuntando a una meta que ya no existe.
+          state.actions.forEach(a=>{ if(a.goalId===g.id) a.goalId=null; });
           await save(); render();
         }
       };
@@ -968,45 +1058,105 @@ function renderMetas(){
     });
   });
 
-  const add=el('<div class="card"><div class="secthead">Agregar meta</div>'+
-    '<label for="gn">Meta (clara, como si ya tuviera fecha)</label><input type="text" id="gn" placeholder="Visitar Israel con la familia">'+
-    '<label for="gw" style="display:block; margin-top:8px;">Mi porqué</label><input type="text" id="gw" placeholder="¿Por qué esta meta vale tu vida?">'+
-    '<label for="ga" style="display:block; margin-top:8px;">Área</label><select id="ga">'+
-    Object.keys(AREAS).map(k=>'<option value="'+k+'">'+AREAS[k].nom+'</option>').join('')+
-    '</select>'+
-    '<label for="gh" style="display:block; margin-top:8px;">¿A cuánto tiempo?</label><select id="gh">'+
-    [1,2,3,5,10,15,20].map(h=>'<option value="'+h+'">'+h+' '+(h===1?'año':'años')+'</option>').join('')+
-    '</select><button class="btn primary" id="ok">Agregar</button></div>');
+  const add=el('<div class="card"><div class="secthead">Agregar meta</div>'+goalFormHTML(null)+
+    '<button class="btn primary" id="ok">Agregar</button></div>');
   app.appendChild(add);
   add.querySelector('#ok').onclick=async()=>{
-    const name=add.querySelector('#gn').value.trim();
-    if(!name){toast('Escribe la meta.');return;}
-    state.goals.push({id:'g'+Date.now(),name,why:add.querySelector('#gw').value.trim(),
-      area:add.querySelector('#ga').value,hor:parseInt(add.querySelector('#gh').value),principal:false,created:todayStr()});
+    const d=readGoalForm(add);
+    if(!d.name){toast('Escribe la meta.');return;}
+    state.goals.push(Object.assign({id:'g'+Date.now()},d,{principal:false,created:todayStr()}));
     await save(); render();
   };
 }
 
 /* ===== ACCIONES ===== */
+// Formulario compartido por "Agregar acción" y "Editar acción". a = acción a editar o null.
+function actionFormHTML(a){
+  const v=a||{name:'',area:'personal',goalId:null};
+  const anuales=(state.goals||[]).filter(g=>(g.hor||1)<=1);
+  const otras=(state.goals||[]).filter(g=>(g.hor||1)>1);
+  const sel=id=>id===v.goalId?' selected':'';
+  const opts='<option value="">— hábito de vida (sin meta) —</option>'+
+    anuales.map(g=>'<option value="'+g.id+'"'+sel(g.id)+'>'+esc(g.name)+(g.principal?' ⭐':'')+'</option>').join('')+
+    (otras.length?'<optgroup label="Metas de más plazo">'+otras.map(g=>'<option value="'+g.id+'"'+sel(g.id)+'>'+esc(g.name)+' ('+g.hor+'a)</option>').join('')+'</optgroup>':'');
+  return '<label for="an">Acción (viable en un día malo)</label><input type="text" id="an" placeholder="Caminata de 30 minutos" value="'+esc(v.name)+'">'+
+    '<label for="ag" style="display:block; margin-top:8px;">¿A qué meta sirve?</label><select id="ag">'+opts+'</select>'+
+    '<label for="aa" style="display:block; margin-top:8px;">Área</label><select id="aa">'+
+    Object.keys(AREAS).map(k=>'<option value="'+k+'"'+(k===v.area?' selected':'')+'>'+AREAS[k].nom+'</option>').join('')+
+    '</select>'+
+    '<label style="display:block; margin-top:8px;">¿Qué días?</label><div class="days" id="ad">'+
+    ORDEN_SEMANA.map(d=>'<button type="button" data-d="'+d+'" aria-label="'+DIAS_NOM[d]+'" class="'+(!v.days||v.days.includes(d)?'on':'')+'">'+DIAS_LETRA[d]+'</button>').join('')+
+    '</div><div class="sub" id="adt" style="font-size:11.5px;"></div>';
+}
+// Engancha los eventos del formulario. Los días se alternan directo en el DOM
+// (sin render()) para no perder lo que ya se escribió en los inputs.
+function wireActionForm(node){
+  const txt=node.querySelector('#adt');
+  const upd=()=>{ const d=readDays(node);
+    txt.textContent=!d.length?'Elige al menos un día.':freqTxt({days:d.length===7?undefined:d}); };
+  node.querySelectorAll('#ad button').forEach(b=>{ b.onclick=()=>{ b.classList.toggle('on'); upd(); }; });
+  node.querySelector('#ag').onchange=()=>{
+    const g=goalById(node.querySelector('#ag').value);
+    if(g) node.querySelector('#aa').value=g.area;
+  };
+  upd();
+}
+function readDays(node){
+  return Array.from(node.querySelectorAll('#ad button.on')).map(b=>parseInt(b.dataset.d)).sort();
+}
+// Devuelve los datos del formulario o null si no son válidos (ya avisó con toast).
+function readActionForm(node){
+  const name=node.querySelector('#an').value.trim();
+  if(!name){toast('Escribe la acción.');return null;}
+  const days=readDays(node);
+  if(!days.length){toast('Elige al menos un día.');return null;}
+  return { name, area:node.querySelector('#aa').value, goalId:node.querySelector('#ag').value||null,
+    days: days.length===7 ? null : days };
+}
+// days null => diaria: se borra la clave (Firestore no acepta undefined y así
+// "diaria" tiene una sola representación, ver isScheduled).
+function applyActionData(a,d){
+  a.name=d.name; a.area=d.area; a.goalId=d.goalId;
+  if(d.days) a.days=d.days; else delete a.days;
+  return a;
+}
 function renderActs(){
   const back=el('<button class="back">← Volver</button>');
   app.appendChild(back);
   back.firstChild.onclick=()=>{view={name:'ajustes'};render();};
 
-  const c=el('<div class="card"><div class="q">Mis acciones diarias</div>'+
-    '<div class="sub">Recomendado: 3 · máximo: 5. El método pide profundidad, no volumen. Idealmente al menos una apunta a tu meta principal ⭐.</div><div id="cur"></div></div>');
+  const c=el('<div class="card"><div class="q">Mis acciones</div>'+
+    '<div class="sub">Recomendado: 3 · máximo: 5. El método pide profundidad, no volumen. Idealmente al menos una apunta a tu meta principal ⭐. Cada acción puede ser diaria, semanal o de algunos días: solo cuenta los días que le tocan.</div><div id="cur"></div></div>');
   app.appendChild(c);
   const cur=c.querySelector('#cur');
   state.actions.forEach(a=>{
+    if(view.edit===a.id){
+      const f=el('<div class="card" style="margin-top:9px; border-color:var(--blue);"><div class="secthead">Editar acción</div>'+actionFormHTML(a)+
+        '<button class="btn primary" id="ok">Guardar cambios</button><button class="btn ghost" id="cx">Cancelar</button></div>');
+      cur.appendChild(f);
+      wireActionForm(f);
+      f.querySelector('#cx').onclick=()=>{ view.edit=null; render(); };
+      f.querySelector('#ok').onclick=async()=>{
+        const d=readActionForm(f); if(!d) return;
+        applyActionData(a,d);
+        view.edit=null; await save(); render();
+        toast('Acción actualizada.');
+      };
+      return;
+    }
     const A=AREAS[a.area], g=goalById(a.goalId);
     const r=document.createElement('div');
     r.className='act';
     r.innerHTML='<span class="aname">'+esc(a.name)+
       '<div class="sub" style="margin-top:2px; font-size:11.5px;">'+
-      (g?'→ '+esc(g.name)+(g.principal?' ⭐':''):'<span style="color:var(--calm);">hábito de vida</span>')+'</div></span>'+
+      (g?'→ '+esc(g.name)+(g.principal?' ⭐':''):'<span style="color:var(--calm);">hábito de vida</span>')+
+      ' · '+freqTxt(a)+'</div></span>'+
       '<span class="atag" style="background:'+A.color+'1c; color:'+A.color+';">'+A.nom+'</span>'+
-      '<button style="background:none; color:var(--muted); font-size:16px; padding:0 4px;" aria-label="Quitar">✕</button>';
-    r.querySelector('button').onclick=async()=>{
+      '<button class="edit" aria-label="Editar">✎</button>'+
+      '<button class="edit" aria-label="Quitar">✕</button>';
+    const btns=r.querySelectorAll('button');
+    btns[0].onclick=()=>{ view.edit=a.id; render(); };
+    btns[1].onclick=async()=>{
       state.actions=state.actions.filter(x=>x.id!==a.id);
       await save(); render();
     };
@@ -1014,27 +1164,13 @@ function renderActs(){
   });
 
   if(state.actions.length<5){
-    const anuales=(state.goals||[]).filter(g=>(g.hor||1)<=1);
-    const otras=(state.goals||[]).filter(g=>(g.hor||1)>1);
-    const opts='<option value="">— hábito de vida (sin meta) —</option>'+
-      anuales.map(g=>'<option value="'+g.id+'">'+esc(g.name)+(g.principal?' ⭐':'')+'</option>').join('')+
-      (otras.length?'<optgroup label="Metas de más plazo">'+otras.map(g=>'<option value="'+g.id+'">'+esc(g.name)+' ('+g.hor+'a)</option>').join('')+'</optgroup>':'');
-    const add=el('<div class="card"><div class="secthead">Agregar acción</div>'+
-      '<label for="an">Acción (viable en un día malo)</label><input type="text" id="an" placeholder="Caminata de 30 minutos">'+
-      '<label for="ag" style="display:block; margin-top:8px;">¿A qué meta sirve?</label><select id="ag">'+opts+'</select>'+
-      '<label for="aa" style="display:block; margin-top:8px;">Área</label><select id="aa">'+
-      Object.keys(AREAS).map(k=>'<option value="'+k+'">'+AREAS[k].nom+'</option>').join('')+
-      '</select><button class="btn primary" id="ok">Agregar</button></div>');
+    const add=el('<div class="card"><div class="secthead">Agregar acción</div>'+actionFormHTML(null)+
+      '<button class="btn primary" id="ok">Agregar</button></div>');
     app.appendChild(add);
-    add.querySelector('#ag').onchange=()=>{
-      const g=goalById(add.querySelector('#ag').value);
-      if(g) add.querySelector('#aa').value=g.area;
-    };
+    wireActionForm(add);
     add.querySelector('#ok').onclick=async()=>{
-      const name=add.querySelector('#an').value.trim();
-      if(!name){toast('Escribe la acción.');return;}
-      state.actions.push({id:'a'+Date.now(),name,area:add.querySelector('#aa').value,
-        goalId:add.querySelector('#ag').value||null});
+      const d=readActionForm(add); if(!d) return;
+      state.actions.push(applyActionData({id:'a'+Date.now()},d));
       await save(); render();
     };
     const sug=SUGERIDAS.filter(s=>!state.actions.some(a=>a.name===s.name));
@@ -1098,7 +1234,7 @@ function renderReview(){
   const c=el('<div class="card"><div class="q">Revisión semanal</div>'+
     '<div style="display:flex; align-items:center; gap:10px; margin-top:12px;">'+
     '<span class="chip" style="background:'+m.color+'22; color:'+m.color+';">'+m.nom+'</span>'+
-    (w.n?'<span class="sub" style="margin:0;">cumplim. '+w.cump+'% · paz '+w.paz+' · energía '+w.ener+'</span>':'')+
+    (w.n?'<span class="sub" style="margin:0;">'+(w.cump!==null?'cumplim. '+w.cump+'% · ':'')+'paz '+w.paz+' · energía '+w.ener+'</span>':'')+
     '</div><div class="msgbox">'+esc(m.msg)+'</div></div>');
   app.appendChild(c);
 
@@ -1106,8 +1242,8 @@ function renderReview(){
     const per={};
     state.actions.forEach(a=>{per[a.area]=per[a.area]||{done:0,total:0};});
     for(let i=0;i<7;i++){
-      const L=state.logs[addDays(hoy,-i)];
-      if(L&&L.pm){ state.actions.forEach(a=>{ per[a.area].total++;
+      const d=addDays(hoy,-i), L=state.logs[d];
+      if(L&&L.pm){ actsOn(d).forEach(a=>{ per[a.area].total++;
         if(L.pm.done&&L.pm.done.includes(a.id)) per[a.area].done++; }); }
     }
     const bal=el('<div class="card"><div class="secthead">Balance por área · 7 días</div><div id="bl"></div></div>');
@@ -1129,12 +1265,12 @@ function renderReview(){
   const conMeta=state.actions.filter(a=>a.goalId);
   if(conMeta.length){
     const porMeta={};
-    conMeta.forEach(a=>{ porMeta[a.goalId]=porMeta[a.goalId]||{done:0,total:0,acts:[]}; porMeta[a.goalId].acts.push(a.id); });
+    conMeta.forEach(a=>{ porMeta[a.goalId]=porMeta[a.goalId]||{done:0,total:0,acts:[]}; porMeta[a.goalId].acts.push(a); });
     for(let i=0;i<7;i++){
-      const L=state.logs[addDays(hoy,-i)];
+      const d=addDays(hoy,-i), L=state.logs[d];
       if(L&&L.pm){ Object.keys(porMeta).forEach(gid=>{
-        porMeta[gid].acts.forEach(aid=>{ porMeta[gid].total++;
-          if(L.pm.done&&L.pm.done.includes(aid)) porMeta[gid].done++; }); }); }
+        porMeta[gid].acts.forEach(a=>{ if(!isScheduled(a,d)) return; porMeta[gid].total++;
+          if(L.pm.done&&L.pm.done.includes(a.id)) porMeta[gid].done++; }); }); }
     }
     const av=el('<div class="card"><div class="secthead">Avance hacia tus metas · 7 días</div><div id="av"></div></div>');
     app.appendChild(av);
