@@ -13,7 +13,7 @@ import {
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
   doc, getDoc, setDoc, collection, getDocs, onSnapshot,
-  runTransaction, writeBatch, serverTimestamp
+  runTransaction, writeBatch, serverTimestamp, terminate, clearIndexedDbPersistence
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 // apiKey/authDomain/etc. son públicos por diseño en apps cliente de
@@ -98,7 +98,19 @@ export async function signInWithGoogle(){
   try{ await signInWithPopup(auth, googleProvider); return null; }
   catch(e){ return authErrorMessage(e); }
 }
-export function signOutUser(){ return signOut(auth); }
+// Además de cerrar la sesión, borra la caché local de Firestore (IndexedDB):
+// sin esto, en un dispositivo compartido las metas, registros y gratitudes de
+// la cuenta anterior quedaban legibles en el almacenamiento del navegador.
+// Tras terminate() la instancia de Firestore ya no sirve, así que se recarga
+// la página para arrancar limpia. Si otra pestaña de la app sigue abierta,
+// clearIndexedDbPersistence falla (failed-precondition): la sesión igual se
+// cierra y la caché se limpia en un próximo cierre de sesión.
+export async function signOutUser(){
+  await signOut(auth);
+  try{ await terminate(db); await clearIndexedDbPersistence(db); }
+  catch(e){ console.warn('No se pudo limpiar la caché local de Firestore', e); }
+  location.reload();
+}
 
 /* ===== Datos (Firestore) =====
    users/{uid}                 doc de perfil (goals, actions, affirmations, logros, subs, theme)
